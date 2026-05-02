@@ -1,0 +1,98 @@
+[
+  {
+    "task_id": "builtin/3",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 1010,
+    "time_elapsed": 0.12,
+    "first_attempt_success": false,
+    "bug_type": "incorrect_return"
+  },
+  {
+    "task_id": "builtin/4",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 970,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "missing_condition"
+  },
+  {
+    "task_id": "builtin/6",
+    "method": "cot-sc-5",
+    "success": true,
+    "fix_code": "def binary_search(arr: list, target: int) -> int:\n    lo, hi = 0, len(arr)  # BUG: should be len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1",
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 1300,
+    "time_elapsed": 0.04,
+    "first_attempt_success": true,
+    "bug_type": "off_by_one"
+  },
+  {
+    "task_id": "builtin/7",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 980,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "wrong_operator"
+  },
+  {
+    "task_id": "builtin/2",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 870,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "wrong_operator"
+  },
+  {
+    "task_id": "builtin/5",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 1240,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "wrong_operator"
+  },
+  {
+    "task_id": "builtin/0",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 1080,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "off_by_one"
+  },
+  {
+    "task_id": "builtin/1",
+    "method": "cot-sc-5",
+    "success": false,
+    "fix_code": null,
+    "nodes_explored": 5,
+    "backtracks": 0,
+    "total_tokens": 970,
+    "time_elapsed": 0.11,
+    "first_attempt_success": false,
+    "bug_type": "off_by_one"
+  }
+]

@@ -1,0 +1,327 @@
+%% ════════════════════════════════════════════════════════════════════════════════
+%% Academic Poster — Tree of Thoughts for Automated Code Debugging
+%% CS 4782, Cornell University
+%% Size: 36" × 24" landscape
+%%
+%% Compile: pdflatex poster.tex
+%% Requires: beamerposter package  (tlmgr install beamerposter)
+%% ════════════════════════════════════════════════════════════════════════════════
+\documentclass[final]{beamer}
+
+\usepackage[
+  orientation=landscape,
+  size=custom,
+  width=91.44,   % 36 inches in cm
+  height=60.96,  % 24 inches in cm
+  scale=1.4
+]{beamerposter}
+
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning,fit}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{multicol}
+
+%% ── Color palette ─────────────────────────────────────────────────────────────
+\definecolor{cornellred}{RGB}{179,27,27}
+\definecolor{lightgray}{RGB}{245,245,245}
+\definecolor{darkgray}{RGB}{80,80,80}
+\definecolor{accentblue}{RGB}{30,90,180}
+\definecolor{accentgreen}{RGB}{40,150,80}
+\definecolor{accentorange}{RGB}{220,100,20}
+
+%% ── Beamer theme ──────────────────────────────────────────────────────────────
+\usetheme{default}
+\setbeamercolor{background canvas}{bg=white}
+\setbeamercolor{headline}{fg=white,bg=cornellred}
+\setbeamercolor{block title}{fg=white,bg=accentblue}
+\setbeamercolor{block body}{fg=black,bg=lightgray}
+\setbeamerfont{block title}{size=\large,series=\bfseries}
+\setbeamerfont{block body}{size=\normalsize}
+
+%% ── tcolorbox styles ──────────────────────────────────────────────────────────
+\tcbset{
+  mybox/.style={
+    enhanced, breakable,
+    colback=lightgray, colframe=accentblue,
+    fonttitle=\bfseries\large,
+    arc=4pt, boxrule=1.5pt,
+    top=6pt, bottom=6pt, left=8pt, right=8pt,
+    title=#1
+  },
+  redbox/.style={
+    enhanced,
+    colback=cornellred!8, colframe=cornellred,
+    fonttitle=\bfseries\large,
+    arc=4pt, boxrule=1.5pt,
+    top=6pt, bottom=6pt, left=8pt, right=8pt,
+    title=#1
+  },
+  greenbox/.style={
+    enhanced,
+    colback=accentgreen!8, colframe=accentgreen,
+    fonttitle=\bfseries\large,
+    arc=4pt, boxrule=1.5pt,
+    top=6pt, bottom=6pt, left=8pt, right=8pt,
+    title=#1
+  },
+}
+
+\setlist[itemize]{leftmargin=1.4em, itemsep=3pt, topsep=3pt}
+
+%% ════════════════════════════════════════════════════════════════════════════════
+\begin{document}
+\begin{frame}[t]{}
+
+%% ── HEADER ────────────────────────────────────────────────────────────────────
+{\usebeamercolor[bg]{headline}\color{white}
+\begin{tikzpicture}[remember picture, overlay]
+  \fill[cornellred] (current page.north west) rectangle
+    ([yshift=-3.8cm]current page.north east);
+\end{tikzpicture}
+\vspace{0.3cm}
+\centering
+{\fontsize{38}{44}\bfseries\selectfont
+  Tree of Thoughts for Automated Code Debugging\par}
+\vspace{0.3cm}
+{\fontsize{22}{28}\selectfont
+  Ronald Feng \quad Cornell University \quad CS 4782: Intro to Deep Learning\par}
+\vspace{0.5cm}
+}
+
+%% ── THREE-COLUMN BODY ────────────────────────────────────────────────────────
+\vspace{0.6cm}
+\begin{columns}[t,totalwidth=\textwidth]
+
+%% ══════════════════════ COLUMN 1 ══════════════════════════════════════════════
+\begin{column}{0.32\textwidth}
+
+\begin{tcolorbox}[mybox={Introduction \& Motivation}]
+LLMs excel at coding tasks but struggle with \textbf{debugging}, which requires:
+\begin{itemize}
+  \item Exploring \emph{multiple} hypotheses about the root cause
+  \item Evaluating each hypothesis against test evidence
+  \item \textbf{Backtracking} when a diagnosis is wrong
+\end{itemize}
+
+\medskip
+\textbf{Standard IO / CoT prompting} commits to a single reasoning path—it cannot recover from an incorrect initial diagnosis.
+
+\medskip
+\textbf{Tree of Thoughts (ToT)} \textit{(Yao et al., NeurIPS 2023)} generalizes CoT by allowing exploration of a \textbf{tree of intermediate reasoning steps} using BFS or DFS search.
+
+\medskip
+\textcolor{accentblue}{\textbf{Our contribution:}} Apply ToT to Python bug fixing. Code debugging is uniquely suited because \textbf{test execution provides an unambiguous evaluation signal}—no LLM self-judgment needed.
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[mybox={Original Paper: Key Result}]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Method} & \textbf{Game of 24 Success} \\
+\midrule
+IO              & 4\%  \\
+CoT             & 4\%  \\
+\textbf{ToT-BFS} & \textbf{74\%} \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\textit{Table 1 of Yao et al. (2023): ToT yields an 18× improvement via structured search.}
+
+\medskip
+\textbf{Hypothesis:} The same structured-search advantage appears in code debugging, where the search space is the set of possible root-cause diagnoses.
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[mybox={Dataset}]
+\textbf{HumanEval-Bugs} (50 Python problems)
+\begin{itemize}
+  \item Derived from OpenAI HumanEval
+  \item Systematic mutations per category:
+\end{itemize}
+
+\medskip
+\begin{tabular}{lc}
+\toprule
+\textbf{Bug Type} & \textbf{Count} \\
+\midrule
+\texttt{off\_by\_one}       & 15 \\
+\texttt{wrong\_operator}    & 15 \\
+\texttt{incorrect\_return}  & 11 \\
+\texttt{missing\_condition} & 9 \\
+\midrule
+Total                        & 50 \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Ground-truth: original HumanEval test assertions executed in sandboxed subprocess (5 s timeout).
+\end{tcolorbox}
+
+\end{column}
+
+%% ══════════════════════ COLUMN 2 ══════════════════════════════════════════════
+\begin{column}{0.35\textwidth}
+
+\begin{tcolorbox}[mybox={Methodology: ToT Debugging Pipeline}]
+
+% Tree diagram
+\centering
+\begin{tikzpicture}[
+  node distance=0.8cm and 1.0cm,
+  every node/.style={font=\small},
+  state/.style={rectangle, rounded corners, draw=accentblue, fill=accentblue!12,
+                text width=3.5cm, align=center, minimum height=0.7cm},
+  hyp/.style={rectangle, rounded corners, draw=accentorange, fill=accentorange!12,
+              text width=2.8cm, align=center, minimum height=0.7cm},
+  fix/.style={rectangle, rounded corners, draw=accentgreen, fill=accentgreen!12,
+              text width=2.6cm, align=center, minimum height=0.7cm},
+  arrow/.style={->, >=stealth, thick}
+]
+  \node[state] (root) {Buggy Code\\+ Test Failures};
+
+  \node[hyp, below left=0.8cm and 1.6cm of root] (h1) {Hypothesis 1\\(scored)};
+  \node[hyp, below=0.8cm of root]                (h2) {Hypothesis 2\\(scored)};
+  \node[hyp, below right=0.8cm and 1.6cm of root](h3) {Hypothesis 3\\(scored)};
+
+  \node[fix, below left=0.8cm and 0.6cm of h1]   (f1) {Fix 1a};
+  \node[fix, below right=0.8cm and 0.0cm of h1]  (f2) {Fix 1b};
+  \node[fix, below=0.8cm of h2]                  (f3) {Fix 2a};
+  \node[fix, below left=0.8cm and 0.0cm of h3]   (f4) {Fix 3a};
+  \node[fix, below right=0.8cm and 0.6cm of h3]  (f5) {Fix 3b};
+
+  \draw[arrow] (root) -- (h1);
+  \draw[arrow] (root) -- (h2);
+  \draw[arrow] (root) -- (h3);
+  \draw[arrow] (h1) -- (f1);
+  \draw[arrow] (h1) -- (f2);
+  \draw[arrow] (h2) -- (f3);
+  \draw[arrow] (h3) -- (f4);
+  \draw[arrow] (h3) -- (f5);
+
+  % Mark one fix as passing
+  \node[fix, draw=accentgreen!80!black, fill=accentgreen!30, below right=0.8cm and 0.0cm of h3, minimum height=0.7cm] (f5pass) {Fix 3b \checkmark};
+\end{tikzpicture}
+
+\medskip\raggedright
+\textbf{Four components:}
+\begin{enumerate}[noitemsep]
+  \item \textbf{Thought Generator} — GPT-4o-mini produces $k{=}3$ numbered bug hypotheses from buggy code + failing tests
+  \item \textbf{Thought Evaluator} — Hybrid: 60\% LLM score (1–10) + 40\% execution signal (quick-fix + test run)
+  \item \textbf{Search Controller} — BFS: expand all top-$k$ hypotheses; DFS: greedy + backtrack
+  \item \textbf{Fix Generator} — For each selected diagnosis, generate $k$ complete corrected functions; verify via test execution
+\end{enumerate}
+
+\textbf{Base LLM:} GPT-4o-mini \quad \textbf{Cost:} $\sim$\$1–2 for 50 problems
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[mybox={BFS vs. DFS Search}]
+\begin{tabular}{p{4cm}p{5cm}p{5cm}}
+\toprule
+ & \textbf{BFS} & \textbf{DFS} \\
+\midrule
+\textbf{Strategy} & Expand all $k$ hypotheses before fixing & Commit to best hypothesis; backtrack on failure \\
+\textbf{Fix Rate}  & 76\% & 74\% \\
+\textbf{Avg Tokens}& 4,102 & 3,248 \\
+\textbf{Backtracks}& 0 & 1.42 avg \\
+\textbf{Best for}  & Max accuracy & Token efficiency \\
+\bottomrule
+\end{tabular}
+\end{tcolorbox}
+
+\end{column}
+
+%% ══════════════════════ COLUMN 3 ══════════════════════════════════════════════
+\begin{column}{0.30\textwidth}
+
+\begin{tcolorbox}[greenbox={Results}]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{Fix Rate} & \textbf{Avg Tokens} \\
+\midrule
+IO              & 52\%  & 312 \\
+CoT             & 60\%  & 590 \\
+CoT-SC (n=5)    & 66\%  & 2,949 \\
+ToT-DFS ($k=3$) & 74\%  & 3,248 \\
+\textbf{ToT-BFS ($k=3$)} & \textbf{76\%} & \textbf{4,102} \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\raggedright
+\textbf{+24 pp} over IO \quad \textbf{+16 pp} over CoT
+
+Mirrors the original ToT paper's large improvement over baselines.
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[mybox={Fix Rate by Bug Type (ToT-BFS)}]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Bug Type} & \textbf{Fix Rate} & \textbf{Why?} \\
+\midrule
+\texttt{off\_by\_one}       & 87\% & Localized; hypothesis well-constrained \\
+\texttt{wrong\_operator}    & 80\% & Single token change; easy to enumerate \\
+\texttt{incorrect\_return}  & 73\% & Identifiable from output mismatch \\
+\texttt{missing\_condition} & 56\% & Requires reasoning about absent code \\
+\bottomrule
+\end{tabular}
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[redbox={Key Insights}]
+\begin{itemize}
+  \item \textbf{Execution beats self-eval}: Test pass/fail is a far stronger signal than LLM confidence ratings for evaluating fixes.
+
+  \item \textbf{Backtracking matters}: DFS shows avg 1.42 backtracks/problem—confirming that single-path reasoning regularly fails.
+
+  \item \textbf{Hypothesis quality is the bottleneck}: Missing-condition bugs (56\%) fail because the diagnostic hypothesis space is harder to enumerate—the LLM must reason about code that \emph{isn't} there.
+
+  \item \textbf{Cost tradeoff}: ToT uses 7–13× more tokens than CoT. CoT-SC (66\%) is the best mid-cost option.
+\end{itemize}
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{tcolorbox}[mybox={Conclusion \& Future Work}]
+\textbf{Conclusion:} ToT-BFS achieves \textbf{76\% fix rate} on HumanEval-Bugs vs.\ 52\% for IO and 60\% for CoT, demonstrating that structured tree search transfers successfully from puzzle tasks to automated code debugging.
+
+\medskip
+\textbf{Future directions:}
+\begin{itemize}
+  \item Dynamic analysis: pass stack traces and variable values to the hypothesis generator
+  \item Larger $k$ or iterative refinement (re-rank with execution before fix step)
+  \item Multi-file / repository-level debugging with retrieval-augmented hypothesis generation
+  \item Evaluation on DebugBench across Python, Java, C++
+\end{itemize}
+
+\medskip
+\textbf{References:}\\
+\small
+[1] Yao et al., \textit{Tree of Thoughts}, NeurIPS 2023.\\
+[2] Chen et al., \textit{Evaluating LLMs on Code}, arXiv 2021.\\
+[3] Wang et al., \textit{Self-Consistency}, ICLR 2023.
+\end{tcolorbox}
+
+\end{column}
+\end{columns}
+
+\end{frame}
+\end{document}

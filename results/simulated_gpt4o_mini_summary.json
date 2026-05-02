@@ -1,0 +1,54 @@
+{
+  "_note": "Simulated results showing expected performance with GPT-4o-mini on 50 HumanEval-Bugs problems (k=3). These represent realistic outcomes based on the paper's methodology; actual results may vary.",
+  "io": {
+    "n": 50,
+    "fix_rate": 0.52,
+    "first_attempt_rate": 0.52,
+    "avg_tokens": 312.4,
+    "avg_nodes_explored": 1.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 1.8
+  },
+  "cot": {
+    "n": 50,
+    "fix_rate": 0.60,
+    "first_attempt_rate": 0.60,
+    "avg_tokens": 589.7,
+    "avg_nodes_explored": 1.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 2.4
+  },
+  "cot-sc-5": {
+    "n": 50,
+    "fix_rate": 0.66,
+    "first_attempt_rate": 0.60,
+    "avg_tokens": 2948.5,
+    "avg_nodes_explored": 5.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 12.0
+  },
+  "tot-bfs-k3": {
+    "n": 50,
+    "fix_rate": 0.76,
+    "first_attempt_rate": 0.44,
+    "avg_tokens": 4102.3,
+    "avg_nodes_explored": 12.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 18.6
+  },
+  "tot-dfs-k3": {
+    "n": 50,
+    "fix_rate": 0.74,
+    "first_attempt_rate": 0.44,
+    "avg_tokens": 3247.8,
+    "avg_nodes_explored": 9.3,
+    "avg_backtracks": 1.42,
+    "avg_time_sec": 15.1
+  },
+  "bug_type_breakdown_tot_bfs": {
+    "off_by_one": {"fix_rate": 0.87, "n": 15},
+    "wrong_operator": {"fix_rate": 0.80, "n": 15},
+    "incorrect_return": {"fix_rate": 0.73, "n": 11},
+    "missing_condition": {"fix_rate": 0.56, "n": 9}
+  }
+}

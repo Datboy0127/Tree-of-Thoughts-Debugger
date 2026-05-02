@@ -1,0 +1,47 @@
+{
+  "tot-bfs-k3": {
+    "n": 8,
+    "fix_rate": 0.0,
+    "first_attempt_rate": 0.0,
+    "avg_tokens": 1390.8,
+    "avg_nodes_explored": 12.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 0.18
+  },
+  "tot-dfs-k3": {
+    "n": 8,
+    "fix_rate": 0.0,
+    "first_attempt_rate": 0.0,
+    "avg_tokens": 1390.8,
+    "avg_nodes_explored": 12.0,
+    "avg_backtracks": 3.0,
+    "avg_time_sec": 0.16
+  },
+  "io": {
+    "n": 8,
+    "fix_rate": 0.125,
+    "first_attempt_rate": 0.125,
+    "avg_tokens": 134.5,
+    "avg_nodes_explored": 1.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 0.02
+  },
+  "cot": {
+    "n": 8,
+    "fix_rate": 0.125,
+    "first_attempt_rate": 0.125,
+    "avg_tokens": 210.5,
+    "avg_nodes_explored": 1.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 0.02
+  },
+  "cot-sc-5": {
+    "n": 8,
+    "fix_rate": 0.125,
+    "first_attempt_rate": 0.125,
+    "avg_tokens": 1052.5,
+    "avg_nodes_explored": 5.0,
+    "avg_backtracks": 0.0,
+    "avg_time_sec": 0.1
+  }
+}

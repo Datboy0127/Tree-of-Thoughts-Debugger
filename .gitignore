@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# API keys / secrets
+.env
+*.env
+secrets.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large data files (download separately per data/README.md)
+data/*.jsonl
+data/*.json
+data/*.csv
+data/human-eval/
+data/evalplus/
+data/debugbench/
+
+# Result binaries / large artifacts
+results/*.pkl
