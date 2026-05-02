@@ -1,19 +1,23 @@
 """
 Tree of Thoughts (ToT) Debugger
 ================================
-Implements BFS and DFS search over a two-level thought tree:
+Implements BFS, DFS, and MCTS search over a two-level thought tree:
   Level 1 (depth=1): Bug hypotheses
   Level 2 (depth=2): Concrete code fixes
 
 Search strategy
-  BFS: Evaluate all k hypotheses, select top-b, then expand all their fix candidates.
-  DFS: Commit greedily to the best hypothesis; backtrack if all its fixes fail.
+  BFS:  Evaluate all k hypotheses, select top-b, then expand all their fix candidates.
+  DFS:  Commit greedily to the best hypothesis; backtrack if all its fixes fail.
+  MCTS: Monte Carlo Tree Search — uses UCB1 to select hypotheses, generates a fix
+        as the rollout, uses test pass/fail as reward, backpropagates through the tree.
 
 References
   Yao et al., "Tree of Thoughts: Deliberate Problem Solving with LLMs", NeurIPS 2023.
+  Coulom, "Efficient Selectivity and Backup Operators in Monte-Carlo Tree Search", 2006.
 """
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -37,6 +41,32 @@ class ThoughtNode:
     fix_code: Optional[str] = None
     test_result: Optional[dict] = None
     tokens_used: int = 0
+
+
+@dataclass
+class MCTSNode:
+    """A node in the MCTS tree representing one bug hypothesis."""
+    hypothesis: str
+    parent: Optional["MCTSNode"] = None
+    children: list = field(default_factory=list)
+    visits: int = 0
+    wins: float = 0.0          # cumulative reward (each rollout gives 0 or 1)
+    fix_code: Optional[str] = None
+    tokens_used: int = 0
+
+    def ucb1(self, exploration: float = math.sqrt(2)) -> float:
+        if self.visits == 0:
+            return float("inf")
+        exploitation = self.wins / self.visits
+        parent_visits = self.parent.visits if self.parent else self.visits
+        exploration_term = exploration * math.sqrt(math.log(parent_visits) / self.visits)
+        return exploitation + exploration_term
+
+    def best_child(self, exploration: float = math.sqrt(2)) -> "MCTSNode":
+        return max(self.children, key=lambda c: c.ucb1(exploration))
+
+    def is_leaf(self) -> bool:
+        return len(self.children) == 0
 
 
 @dataclass
@@ -128,11 +158,13 @@ class ToTDebugger:
 
     Parameters
     ----------
-    llm       : LLMClient
-    executor  : CodeExecutor
-    k         : branching factor (candidates per level)
-    search    : "bfs" | "dfs"
-    evaluator : "llm" | "execution" | "hybrid"
+    llm            : LLMClient
+    executor       : CodeExecutor
+    k              : branching factor (candidates per level)
+    search         : "bfs" | "dfs" | "mcts"
+    evaluator      : "llm" | "execution" | "hybrid"
+    n_simulations  : MCTS iterations per problem (default 12)
+    exploration    : MCTS UCB1 exploration constant C (default √2)
     """
 
     def __init__(
@@ -142,18 +174,27 @@ class ToTDebugger:
         k: int = 3,
         search: str = "bfs",
         evaluator: str = "hybrid",
+        n_simulations: int = 12,
+        exploration: float = math.sqrt(2),
     ):
         self.llm = llm
         self.executor = executor
         self.k = k
         self.search = search
         self.evaluator = evaluator
+        self.n_simulations = n_simulations
+        self.exploration = exploration
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def solve(self, problem: Problem) -> DebugResult:
         t0 = time.time()
-        result = self._bfs_solve(problem) if self.search == "bfs" else self._dfs_solve(problem)
+        if self.search == "bfs":
+            result = self._bfs_solve(problem)
+        elif self.search == "dfs":
+            result = self._dfs_solve(problem)
+        else:
+            result = self._mcts_solve(problem)
         result.time_elapsed = round(time.time() - t0, 2)
         result.bug_type = problem.bug_type
         return result
@@ -269,6 +310,106 @@ class ToTDebugger:
             total_tokens=total_tokens,
             time_elapsed=0,
             first_attempt_success=False,
+        )
+
+    # ── MCTS ──────────────────────────────────────────────────────────────────
+
+    def _mcts_solve(self, problem: Problem) -> DebugResult:
+        """
+        Monte Carlo Tree Search over bug hypotheses.
+
+        Tree structure:
+          root (virtual) → MCTSNode per hypothesis → rollout (generate fix + execute)
+
+        Each iteration:
+          1. Selection   — walk tree via UCB1 to find the most promising leaf
+          2. Expansion   — if the leaf has no children, generate k new hypotheses
+          3. Simulation  — generate one fix for the selected node, run tests (reward 0/1)
+          4. Backprop    — update visits and wins up to root
+        """
+        total_tokens = 0
+        nodes_explored = 0
+        best_fix: Optional[str] = None
+        first_attempt_success = False
+
+        # Root holds the initial hypothesis pool (expanded once)
+        root = MCTSNode(hypothesis="root")
+        self._last_mcts_root = root  # expose for visualization
+
+        # Seed root with k initial hypotheses
+        hypotheses = self._generate_hypotheses(problem)
+        total_tokens += sum(h.tokens_used for h in hypotheses)
+        for h in hypotheses:
+            child = MCTSNode(hypothesis=h.content, parent=root, tokens_used=h.tokens_used)
+            root.children.append(child)
+        nodes_explored += len(root.children)
+
+        for sim in range(self.n_simulations):
+            # ── 1. Selection ───────────────────────────────────────────────
+            node = root
+            while not node.is_leaf() and node.visits > 0:
+                node = node.best_child(self.exploration)
+
+            # ── 2. Expansion ───────────────────────────────────────────────
+            # If this node has been visited before, expand with a new hypothesis
+            if node.visits > 0 and node is not root:
+                new_hyps = self._generate_hypotheses(problem)
+                total_tokens += sum(h.tokens_used for h in new_hyps)
+                for h in new_hyps:
+                    already = any(c.hypothesis == h.content for c in root.children)
+                    if not already:
+                        child = MCTSNode(hypothesis=h.content, parent=root, tokens_used=h.tokens_used)
+                        root.children.append(child)
+                        nodes_explored += 1
+                # Re-select after expansion
+                node = root.best_child(self.exploration)
+
+            # ── 3. Simulation (rollout) ────────────────────────────────────
+            # Generate one fix for this hypothesis and run the tests
+            thought = ThoughtNode(content=node.hypothesis, depth=1, node_type="hypothesis")
+            fixes = self._generate_fixes(thought, problem)
+            total_tokens += sum(f.tokens_used for f in fixes)
+            nodes_explored += len(fixes)
+
+            reward = 0.0
+            for fix_node in fixes:
+                result = self.executor.execute(fix_node.fix_code, problem.test_code)
+                fix_node.test_result = result
+                if result["passed"]:
+                    reward = 1.0
+                    if best_fix is None:
+                        best_fix = fix_node.fix_code
+                        first_attempt_success = (sim == 0)
+                    break
+                # Partial reward: fraction of passing tests (encourages progress)
+                elif result["stderr"] == "" and result["stdout"] != "":
+                    reward = max(reward, 0.1)
+
+            node.fix_code = fixes[0].fix_code if fixes else None
+
+            # ── 4. Backpropagation ─────────────────────────────────────────
+            current = node
+            while current is not None:
+                current.visits += 1
+                current.wins += reward
+                current = current.parent
+
+            if best_fix is not None and reward == 1.0:
+                # Early exit if we already found a passing fix
+                # (continue remaining simulations to improve hypothesis ranking stats)
+                pass
+
+        success = best_fix is not None
+        return DebugResult(
+            task_id=problem.task_id,
+            method=f"mcts-k{self.k}-s{self.n_simulations}",
+            success=success,
+            fix_code=best_fix,
+            nodes_explored=nodes_explored,
+            backtracks=0,
+            total_tokens=total_tokens,
+            time_elapsed=0,
+            first_attempt_success=first_attempt_success,
         )
 
     # ── Thought generation ────────────────────────────────────────────────────
