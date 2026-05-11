@@ -3,7 +3,8 @@
 %% CS 4782, Cornell University · 36" × 24" landscape
 %%
 %% Compile: pdflatex poster.tex  (Overleaf: pdfLaTeX engine)
-%% Requires: beamerposter  (tlmgr install beamerposter)
+%% Upload to Overleaf: fix_rates.png, bug_type_breakdown.png
+%%   (from results_new_run_charts/)
 %% ════════════════════════════════════════════════════════════════════════════════
 \documentclass[final]{beamer}
 
@@ -21,6 +22,7 @@
 \usepackage{booktabs}
 \usepackage{amsmath}
 \usepackage{graphicx}
+\graphicspath{{../results_new_run_charts/}}
 \usepackage{tikz}
 \usepackage{xcolor}
 
@@ -38,276 +40,207 @@
 \setbeamercolor{block title}{fg=white, bg=accentblue}
 \setbeamercolor{block body}{fg=black, bg=lightgray}
 \setbeamercolor{block title alerted}{fg=white, bg=cornellred}
-\setbeamercolor{block body alerted}{fg=black, bg=cornellred!8}
+\setbeamercolor{block body alerted}{fg=black, bg=cornellred!10}
 \setbeamercolor{block title example}{fg=white, bg=accentgreen}
-\setbeamercolor{block body example}{fg=black, bg=accentgreen!8}
+\setbeamercolor{block body example}{fg=black, bg=accentgreen!10}
 
 \setbeamerfont{block title}{size=\large, series=\bfseries}
 \setbeamerfont{block body}{size=\normalsize}
-
-%% ── Tree diagram helpers (colorbox — no tikz in body) ─────────────────────────
-\newcommand{\noderoot}[1]{%
-  \colorbox{accentblue!20}{\makebox[10cm]{\small\textbf{#1}}}}
-\newcommand{\nodehyp}[1]{%
-  \colorbox{orange!20}{\makebox[3.0cm]{\small #1}}}
-\newcommand{\nodefix}[1]{%
-  \colorbox{accentgreen!20}{\makebox[2.4cm]{\footnotesize #1}}}
-\newcommand{\nodefixok}[1]{%
-  \colorbox{accentgreen!50}{\makebox[2.4cm]{\footnotesize\textbf{#1}}}}
 
 %% ════════════════════════════════════════════════════════════════════════════════
 \begin{document}
 \begin{frame}[t]{}
 
-%% ── HEADER ────────────────────────────────────────────────────────────────────
+%% ── HEADER (reduced to ~6 cm to leave more content space) ────────────────────
 \begin{tikzpicture}[remember picture, overlay]
   \fill[cornellred] (current page.north west)
-    rectangle ([yshift=-9cm]current page.north east);
+    rectangle ([yshift=-6.5cm]current page.north east);
 \end{tikzpicture}
 
-\vspace{0.5cm}
+\vspace{0.3cm}
 \centering
-{\fontsize{56}{64}\bfseries\color{white}\selectfont
+{\fontsize{42}{50}\bfseries\color{white}\selectfont
   Tree of Thoughts for Automated Code Debugging\par}
-\vspace{1.5cm}
-{\fontsize{30}{36}\color{white}\selectfont
+\vspace{0.4cm}
+{\fontsize{22}{28}\color{white}\selectfont
   Ronald Feng \quad Jefferson Zhou \quad Haochen Wang
   \quad\textbullet\quad Cornell University
-  \quad\textbullet\quad CS 4782: Intro to Deep Learning\par}
-\vspace{1.5cm}
+  \quad\textbullet\quad CS\,4782: Intro to Deep Learning\par}
+\vspace{0.5cm}
 
 %% ── THREE-COLUMN BODY ────────────────────────────────────────────────────────
 \begin{columns}[t,totalwidth=\textwidth]
 
-%% ══════════════════════ COLUMN 1 ══════════════════════════════════════════════
-\begin{column}{0.31\textwidth}
+%% ══════════════════════ COLUMN 1 — Intro + Method ════════════════════════════
+\begin{column}{0.29\textwidth}
 
 \begin{block}{Introduction \& Motivation}
-LLMs excel at coding but struggle with \textbf{debugging}, which requires:
+\textbf{Problem:} LLMs struggle with debugging — it requires exploring \emph{multiple} hypotheses and backtracking from wrong diagnoses. Standard IO / CoT locks into one path.
+
+\vspace{0.4cm}
+\textbf{Solution:} \textbf{Tree of Thoughts (ToT)} (Yao et al., NeurIPS 2023) lets an LLM search a tree of reasoning steps. We re-implement and extend it with \textbf{MCTS} for code debugging.
+
+\vspace{0.4cm}
+\textbf{Key advantage of code debugging as a domain:}
 \begin{itemize}
 \setlength{\itemsep}{2pt}
-  \item Exploring \emph{multiple} hypotheses about the root cause
-  \item Evaluating each against test evidence
-  \item \textbf{Backtracking} when a diagnosis is wrong
+  \item Test pass/fail provides \textbf{unambiguous reward} — no noisy LLM self-evaluation needed
+  \item Bugs are localized to single functions — tractable search space
+  \item Automatic, reproducible evaluation
 \end{itemize}
-\vspace{0.4cm}
-\textbf{Standard IO / CoT} commits to one path and cannot recover from a wrong diagnosis.
-\vspace{0.4cm}
 
-\textbf{Tree of Thoughts (ToT)} \textit{(Yao et al., NeurIPS 2023)} lets an LLM explore a \textbf{tree of reasoning steps} via BFS or DFS. We extend it with \textbf{MCTS}.
 \vspace{0.4cm}
-
-\textcolor{accentblue}{\textbf{Key advantage:}} Code debugging has an \textbf{unambiguous reward signal} --- test pass/fail. The original ToT relied on noisy LLM self-evaluation. We don't.
-\vspace{0.4cm}
-
-\textbf{Base LLM:} Qwen2.5-Coder-7B-Instruct via Ollama\\
-\textbf{Cost:} \$0 --- fully open-source, runs locally\\
-\textbf{Hardware:} Apple Silicon (Metal acceleration)
+\textbf{Target result:} Table 1 of Yao et al. — ToT-BFS achieves \textbf{74\%} on Game of 24 vs \textbf{4\%} for IO/CoT (18$\times$ gain). We reproduce this structured-search advantage in debugging.
 \end{block}
-
-\vspace{0.6cm}
-
-\begin{block}{Original Paper: Key Result}
-\centering
-\begin{tabular}{@{} l c @{}}
-\toprule
-\textbf{Method} & \textbf{Game of 24} \\
-\midrule
-IO               & 4\%  \\
-CoT              & 4\%  \\
-\textbf{ToT-BFS} & \textbf{74\%} \\
-\bottomrule
-\end{tabular}
-\vspace{0.4cm}
-
-\raggedright
-\textit{Yao et al.\ (2023): 18$\times$ improvement via structured search.}
-\vspace{0.4cm}
-
-\textbf{We reproduce this gap in code debugging} and extend it by introducing MCTS with execution-based reward backpropagation.
-\end{block}
-
-\vspace{0.6cm}
-
-\begin{block}{Dataset}
-\textbf{HumanEval-Bugs} --- 50 Python problems
-
-\vspace{0.4cm}
-\begin{tabular}{@{} l c @{}}
-\toprule
-\textbf{Bug Type} & \textbf{Count} \\
-\midrule
-\texttt{off\_by\_one}       & 15 \\
-\texttt{wrong\_operator}    & 15 \\
-\texttt{incorrect\_return}  & 11 \\
-\texttt{missing\_condition} &  9 \\
-\midrule
-Total                        & 50 \\
-\bottomrule
-\end{tabular}
-\vspace{0.4cm}
-
-Test cases from OpenAI HumanEval assertions.\\
-Execution: sandboxed \texttt{subprocess}, 5 s timeout.
-\end{block}
-
-\end{column}
-
-%% ══════════════════════ COLUMN 2 ══════════════════════════════════════════════
-\begin{column}{0.34\textwidth}
-
-\begin{block}{Methodology: Shared Architecture}
-\textbf{Four components common to BFS, DFS, and MCTS:}
-\begin{enumerate}
-\setlength{\itemsep}{2pt}
-  \item \textbf{Thought Generator} --- Qwen produces $k{=}3$ numbered bug-hypothesis candidates
-  \item \textbf{Thought Evaluator} --- Hybrid: 60\% LLM plausibility (1--10) + 40\% execution signal
-  \item \textbf{Search Controller} --- BFS, DFS, or \textbf{MCTS} (see below)
-  \item \textbf{Fix Generator} --- For each hypothesis, generate $k$ fixes; verify by running tests
-\end{enumerate}
 
 \vspace{0.5cm}
-\centering
-\renewcommand{\arraystretch}{1.4}
-\begin{tabular}{@{}ccccc@{}}
-\multicolumn{5}{c}{\noderoot{Buggy Code + Failing Tests}}\\[2pt]
-& $\swarrow$ & $\downarrow$ & $\searrow$ & \\[2pt]
-\nodehyp{Hypothesis 1} &&
-\nodehyp{Hypothesis 2} &&
-\nodehyp{Hypothesis 3}\\[2pt]
-{\scriptsize\textcolor{accentpurple}{UCB1=1.8}} &&
-{\scriptsize\textcolor{accentpurple}{UCB1=1.4}} &&
-{\scriptsize\textcolor{accentpurple}{UCB1=2.1}}\\[2pt]
-$\downarrow\!\downarrow$ && $\downarrow$ && $\downarrow\!\downarrow$\\[2pt]
-\nodefix{1a}\;\nodefix{1b} &&
-\nodefix{2a} &&
-\nodefix{3a}\;\nodefixok{3b\checkmark}\\
-\end{tabular}
-\end{block}
 
-\vspace{0.6cm}
+\begin{block}{Dataset \& Setup}
+\textbf{HumanEval-Bugs} — 164 Python problems
 
-\begin{alertblock}{Novel Contribution: MCTS Search}
-\textbf{Why MCTS?} BFS exhausts all nodes; DFS commits early. MCTS \emph{learns} which hypotheses deserve more exploration via a principled tradeoff.
-
-\vspace{0.4cm}
-\textbf{UCB1 selection formula:}
-\[
-  \mathrm{UCB1}(v) = \underbrace{\frac{w_v}{n_v}}_{\text{exploit}}
-  +\; C\sqrt{\frac{\ln n_{\mathrm{parent}}}{n_v}}
-  \quad C = \sqrt{2}
-\]
-where $w_v$ = tests passed, $n_v$ = visits.
-
-\vspace{0.4cm}
-\textbf{Four MCTS phases:}
-\begin{enumerate}
-\setlength{\itemsep}{2pt}
-  \item \textbf{Selection} --- walk tree via UCB1 to most promising leaf
-  \item \textbf{Expansion} --- generate new hypothesis if leaf already visited
-  \item \textbf{Simulation} --- generate fix, run tests $\to$ reward $\in \{0,\,0.1,\,1\}$
-  \item \textbf{Backpropagation} --- update $w_v$, $n_v$ up to root
-\end{enumerate}
-\vspace{0.4cm}
-
-\textcolor{accentpurple}{\textbf{Key insight:}} MCTS uses \textbf{test execution as ground-truth reward} --- backpropagation corrects noisy LLM scoring across repeated rollouts.
-\end{alertblock}
-
-\vspace{0.6cm}
-
-\begin{block}{BFS vs.\ DFS vs.\ MCTS}
-\centering\small
-\begin{tabular}{@{} l c c c @{}}
+\vspace{0.35cm}
+\begin{tabular}{@{} l c @{}}
 \toprule
- & \textbf{BFS} & \textbf{DFS} & \textbf{MCTS} \\
+\textbf{Bug Category} & \textbf{Count} \\
 \midrule
-Strategy   & All nodes    & Greedy+bt    & UCB1 guided \\
-Fix Rate   & 76\%         & 74\%         & \textbf{78\%} \\
-Avg Tokens & 4,102        & 3,248        & 3,890 \\
-Backtracks & 0            & 1.42         & 0 \\
-Adaptive?  & \texttimes   & \texttimes   & \checkmark \\
+\texttt{wrong\_operator}    & 106 \\
+\texttt{incorrect\_return}  & 33  \\
+\texttt{missing\_condition} & 17  \\
+\texttt{off\_by\_one}       & 8   \\
+\midrule
+Total                        & 164 \\
 \bottomrule
 \end{tabular}
+
+\vspace{0.35cm}
+\textbf{LLM:} Qwen2.5-Coder-7B-Instruct (Ollama)\\
+\textbf{Cost:} \$0 — open-source, local inference\\
+\textbf{Hardware:} Google Colab (NVIDIA GPU)\\
+\textbf{Eval:} Sandboxed \texttt{subprocess}, 5\,s timeout
+\end{block}
+
+\vspace{0.5cm}
+
+\begin{block}{Methodology}
+\textbf{Shared 4-component pipeline:}
+\begin{enumerate}
+\setlength{\itemsep}{2pt}
+  \item \textbf{Thought Generator} — LLM produces $k{=}3$ bug-hypothesis candidates
+  \item \textbf{Thought Evaluator} — Hybrid: 60\% LLM score + 40\% execution signal
+  \item \textbf{Search Controller} — BFS, DFS, or MCTS
+  \item \textbf{Fix Generator} — Per hypothesis: generate $k$ fixes, verify by tests
+\end{enumerate}
+
+\vspace{0.35cm}
+\textbf{Modifications vs.\ original ToT:}
+\begin{itemize}
+\setlength{\itemsep}{2pt}
+  \item Execution-based reward replaces LLM self-evaluation
+  \item Two-level tree: hypotheses $\to$ fixes
+  \item \textbf{MCTS} added as novel third search strategy
+\end{itemize}
 \end{block}
 
 \end{column}
 
-%% ══════════════════════ COLUMN 3 ══════════════════════════════════════════════
-\begin{column}{0.31\textwidth}
+%% ══════════════════════ COLUMN 2 — Results ═══════════════════════════════════
+\begin{column}{0.42\textwidth}
 
-\begin{exampleblock}{Results}
+\begin{exampleblock}{Results: Fix Rate by Method (n = 164)}
 \centering
-\begin{tabular}{@{} l c c c @{}}
+\includegraphics[width=0.97\linewidth]{fix_rates.png}
+
+\vspace{0.3cm}
+\raggedright
+\begin{tabular}{@{} l c c c c @{}}
 \toprule
-\textbf{Method} & \textbf{Fix\%} & \textbf{Tokens} & \textbf{Bkt} \\
+\textbf{Method} & \textbf{Fix Rate} & \textbf{1st-Attempt} & \textbf{Avg Tokens} & \textbf{Avg Time} \\
 \midrule
-IO                       & 52\%          & 312   & 0    \\
-CoT                      & 60\%          & 590   & 0    \\
-CoT-SC ($n{=}5$)         & 66\%          & 2,949 & 0    \\
-ToT-DFS ($k{=}3$)        & 74\%          & 3,248 & 1.42 \\
-ToT-BFS ($k{=}3$)        & 76\%          & 4,102 & 0    \\
-\textbf{MCTS} ($k{=}3$) & \textbf{78\%} & 3,890 & 0    \\
+IO                        & 87.8\%           & 87.8\%               & 567                 & 2.0\,s \\
+CoT                       & 77.4\%           & 77.4\%               & 940                 & 5.0\,s \\
+CoT-SC ($n{=}5$)          & 95.7\%           & 95.7\%               & 4,749               & 24.6\,s \\
+ToT-BFS ($k{=}3$)         & 98.8\%           & 79.9\%               & 2,874               & 14.7\,s \\
+ToT-DFS ($k{=}3$)         & 98.8\%           & 86.6\%               & 2,798               & 14.2\,s \\
+\textbf{MCTS} ($k{=}3$, $s{=}12$) & \textbf{100\%} & \textbf{92.1\%} & 14,335 & 64.0\,s \\
 \bottomrule
 \end{tabular}
-\vspace{0.4cm}
-
-\raggedright
-\textbf{MCTS:} highest fix rate at lower token cost than BFS.\\
-\textbf{+26 pp} over IO \quad \textbf{+18 pp} over CoT.
 \end{exampleblock}
 
-\vspace{0.6cm}
+\vspace{0.5cm}
 
-\begin{block}{Fix Rate by Bug Type}
+\begin{alertblock}{Novel Contribution: MCTS Search}
+\textbf{Why MCTS?} BFS exhausts all nodes; DFS commits early. MCTS \emph{learns} which hypotheses deserve more exploration via UCB1.
+
+\vspace{0.35cm}
+\textbf{UCB1 node selection:}
+\[
+  \mathrm{UCB1}(v) = \underbrace{\frac{w_v}{n_v}}_{\text{exploit}}
+  + C\sqrt{\frac{\ln n_{\mathrm{parent}}}{n_v}}, \quad C = \sqrt{2}
+\]
+
+\textbf{Four phases per iteration:}
+\begin{enumerate}
+\setlength{\itemsep}{1pt}
+  \item \textbf{Select} via UCB1 to most promising leaf
+  \item \textbf{Expand} — new hypothesis if leaf already visited
+  \item \textbf{Simulate} — generate fix, run tests $\to$ reward $\in \{0, 0.1, 1.0\}$
+  \item \textbf{Backpropagate} — update $w_v$, $n_v$ to root
+\end{enumerate}
+
+\vspace{0.3cm}
+\textcolor{accentpurple}{\textbf{Result: MCTS is the only method to achieve 100\% fix rate.}} With $s{=}12$ simulations it explores 46.8 nodes on average, allocating more rollouts to promising hypotheses rather than uniformly expanding all branches.
+\end{alertblock}
+
+\end{column}
+
+%% ══════════════════════ COLUMN 3 — Analysis + Insights ══════════════════════
+\begin{column}{0.26\textwidth}
+
+\begin{block}{Fix Rate by Bug Type (ToT-BFS)}
 \centering
-\begin{tabular}{@{} l c c @{}}
-\toprule
-\textbf{Bug Type} & \textbf{MCTS} & \textbf{BFS} \\
-\midrule
-\texttt{off\_by\_one}       & \textbf{90\%} & 87\% \\
-\texttt{wrong\_operator}    & \textbf{83\%} & 80\% \\
-\texttt{incorrect\_return}  & \textbf{75\%} & 73\% \\
-\texttt{missing\_condition} & 56\%          & 56\% \\
-\bottomrule
-\end{tabular}
-\vspace{0.4cm}
+\includegraphics[width=0.97\linewidth]{bug_type_breakdown.png}
 
-\raggedright
-MCTS gains most on constrained bug types; \texttt{missing\_condition} remains hardest --- the model must reason about \emph{absent} code.
+\raggedright\vspace{0.2cm}
+\texttt{off\_by\_one} (87.5\%) is hardest — ambiguous boundary requires multiple fix attempts.
+All other categories hit $\geq$99\%.
 \end{block}
 
-\vspace{0.6cm}
+\vspace{0.5cm}
 
 \begin{block}{Key Insights}
 \begin{itemize}
-\setlength{\itemsep}{3pt}
-  \item \textbf{Execution $>$ self-eval:} Test pass/fail is unambiguous; LLM confidence is noisy. MCTS exploits this directly.
-  \item \textbf{Backprop corrects bad priors:} MCTS re-routes when rollouts fail and UCB1 updates, even if the LLM's initial score was wrong.
-  \item \textbf{Token-efficient vs.\ BFS:} MCTS focuses on the best branch after a few rollouts rather than expanding all $k$ nodes.
-  \item \textbf{Open-ended search space:} Bug hypotheses are unbounded --- MCTS's adaptive allocation outperforms exhaustive BFS here.
+\setlength{\itemsep}{4pt}
+  \item \textbf{CoT hurts vs.\ IO} (77.4\% vs.\ 87.8\%) — Qwen2.5-Coder-7B \emph{over-reasons}: extended chain-of-thought introduces errors that direct prompting avoids.
+
+  \item \textbf{ToT search recovers} — BFS/DFS reach 98.8\% by generating multiple fix candidates and verifying each against tests.
+
+  \item \textbf{MCTS achieves 100\%} — execution-based backpropagation corrects noisy initial LLM scores; poor hypotheses are deprioritised after failed rollouts.
+
+  \item \textbf{Token tradeoff} — MCTS uses $5\times$ more tokens than BFS/DFS. Since Qwen runs locally at \$0, cost is wall-clock time (${\sim}$64\,s/problem), not dollars.
+
+  \item \textbf{Backtracking matters} — DFS with backtrack fixes 84.6\% of backtracked problems vs.\ 100\% without, confirming that initial hypotheses are often wrong.
 \end{itemize}
 \end{block}
 
-\vspace{0.6cm}
+\vspace{0.5cm}
 
 \begin{block}{Conclusion \& Future Work}
-\textbf{Conclusion:} MCTS achieves \textbf{78\% fix rate} with Qwen2.5-Coder-7B (\$0, open-source), outperforming BFS, DFS, and all baselines. Execution-based reward backpropagation is the key advantage over the original ToT framework.
-\vspace{0.4cm}
+\textbf{ToT + MCTS achieves perfect 100\% fix rate} on HumanEval-Bugs using a free, open-source 7B model. Execution-based reward backpropagation is the decisive advantage over all baselines.
 
+\vspace{0.35cm}
 \textbf{Future directions:}
 \begin{itemize}
 \setlength{\itemsep}{2pt}
-  \item Larger $k$ / deeper trees where MCTS advantage grows
-  \item Dynamic analysis: pass stack traces as context
-  \item Repository-level debugging with RAG hypothesis generation
-  \item Evaluation on DebugBench (4,253 problems, 3 languages)
+  \item Scale to repository-level bugs (multi-file context)
+  \item Dynamic analysis: inject stack traces / runtime values
+  \item Evaluate on DebugBench (4,253 bugs, 3 languages)
+  \item Reduce MCTS token cost via early-stopping rollouts
 \end{itemize}
-\vspace{0.4cm}
 
-\textbf{References:}\,
-\small
+\vspace{0.35cm}
+\textbf{References:}\,\small
 [1] Yao et al., \textit{Tree of Thoughts}, NeurIPS 2023.
-[2] Chen et al., \textit{Evaluating LLMs on Code}, arXiv 2021.
+[2] Chen et al., \textit{HumanEval}, arXiv 2021.
 [3] Wang et al., \textit{Self-Consistency}, ICLR 2023.
 [4] Coulom, \textit{MCTS in Games}, CG 2006.
 \end{block}

@@ -1,0 +1,25 @@
+Key findings of the original ToT paper:
+
+ToT dramatically outperforms IO and CoT — Game of 24: 74% vs 4% for both. Mini Crosswords: 60% vs ~15%. The gap is consistent across all three tasks.
+
+Self-consistency (CoT-SC) helps but not enough — sampling multiple CoT paths and taking majority vote improves over single CoT, but still far behind ToT because it can't backtrack or deliberately explore.
+
+Backtracking is crucial — DFS on crosswords shows that the ability to abandon a wrong path and try another is what makes the difference. Greedy approaches consistently fail when the first guess is wrong.
+
+LLMs can evaluate their own thoughts — the paper shows GPT-4 can reliably judge whether a partial state is "sure/likely/impossible" without an external oracle, which is what makes the whole framework work.
+
+The bottleneck is search, not generation — the LLM's raw ability to generate correct solutions isn't the limiting factor. Given enough structured tries, it finds the answer. The problem with IO/CoT is the lack of organized exploration.
+
+Why CoT is worse than IO in your results:
+
+CoT was designed for and validated on large models like GPT-4. With a 7B model there are a few things going wrong:
+
+Compounding errors — IO just generates code directly. CoT first generates a written diagnosis, then generates code based on that diagnosis. If the diagnosis is slightly wrong, the fix follows the wrong reasoning. Two chances to fail instead of one.
+
+Overthinking simple bugs — your bugs are single-line mutations (wrong operator, off-by-one). Qwen2.5-Coder has seen millions of these patterns during training and can often fix them instinctively. Forcing it to reason explicitly about them can actually push it away from its strongest mode — direct code generation.
+
+7B models aren't reliable reasoners — there's published evidence that CoT helps above a certain model scale and can hurt below it. The model generates a plausible-sounding but incorrect reasoning chain, then commits to a fix that follows the wrong logic.
+
+Qwen is code-optimized — its training heavily emphasizes direct code completion. IO plays to that strength. CoT adds a natural language reasoning prefix that the model is comparatively weaker at.
+
+The short version: CoT assumes the model's reasoning is reliable enough to be worth following. For a 7B model on code, the raw pattern-matching is more trustworthy than the explicit reasoning chain.

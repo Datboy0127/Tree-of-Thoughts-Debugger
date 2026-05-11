@@ -1,19 +1,28 @@
 """
 Tree of Thoughts (ToT) Debugger
 ================================
-Implements BFS, DFS, and MCTS search over a two-level thought tree:
-  Level 1 (depth=1): Bug hypotheses
-  Level 2 (depth=2): Concrete code fixes
+3-level thought tree matching Yao et al. (NeurIPS 2023) structure:
 
-Search strategy
-  BFS:  Evaluate all k hypotheses, select top-b, then expand all their fix candidates.
-  DFS:  Commit greedily to the best hypothesis; backtrack if all its fixes fail.
-  MCTS: Monte Carlo Tree Search — uses UCB1 to select hypotheses, generates a fix
-        as the rollout, uses test pass/fail as reward, backpropagates through the tree.
+  Level 1 (Area):       Which component of the code contains the bug?
+  Level 2 (Hypothesis): What specifically is wrong with that component?
+  Level 3 (Fix):        Concrete corrected code, verified by test execution.
+
+This mirrors the paper's 3-step Game of 24 tree (depth=3, branching=5).
+
+Evaluation uses the paper's exact scheme: the LLM rates each thought as
+"sure / likely / impossible", and impossible states are pruned immediately.
+
+Search strategies
+  BFS:  Generate k candidates at each level, prune impossible, keep top-k,
+        expand all survivors before moving to the next level.
+  DFS:  Greedy descent; backtrack at hypothesis level first, then area level.
+        "Impossible" thoughts are pruned without expansion.
+  MCTS: UCB1-guided selection over hypotheses; test execution as reward;
+        backpropagation corrects noisy initial LLM scores over rollouts.
 
 References
-  Yao et al., "Tree of Thoughts: Deliberate Problem Solving with LLMs", NeurIPS 2023.
-  Coulom, "Efficient Selectivity and Backup Operators in Monte-Carlo Tree Search", 2006.
+  Yao et al., "Tree of Thoughts", NeurIPS 2023.
+  Coulom, "Efficient Selectivity and Backup Operators in MCTS", CG 2006.
 """
 from __future__ import annotations
 
@@ -33,11 +42,11 @@ from data_loader import Problem
 @dataclass
 class ThoughtNode:
     content: str
-    depth: int
-    node_type: str = "hypothesis"   # "hypothesis" | "fix"
+    depth: int                          # 1=area, 2=hypothesis, 3=fix
+    node_type: str = "area"             # "area" | "hypothesis" | "fix"
     parent: Optional["ThoughtNode"] = None
     children: list = field(default_factory=list)
-    score: float = 0.0
+    score: float = 0.5                  # 0=impossible, 0.5=likely, 1.0=sure
     fix_code: Optional[str] = None
     test_result: Optional[dict] = None
     tokens_used: int = 0
@@ -45,12 +54,11 @@ class ThoughtNode:
 
 @dataclass
 class MCTSNode:
-    """A node in the MCTS tree representing one bug hypothesis."""
     hypothesis: str
     parent: Optional["MCTSNode"] = None
     children: list = field(default_factory=list)
     visits: int = 0
-    wins: float = 0.0          # cumulative reward (each rollout gives 0 or 1)
+    wins: float = 0.0
     fix_code: Optional[str] = None
     tokens_used: int = 0
 
@@ -83,97 +91,142 @@ class DebugResult:
     bug_type: str = "unknown"
 
 
-# ── Prompt templates ───────────────────────────────────────────────────────────
+# ── Prompt templates (matching paper's evaluation scheme) ──────────────────────
 
-_HYPOTHESIS_PROMPT = """\
-You are an expert Python debugger. Analyze the buggy function below and propose {k} \
-distinct, numbered hypotheses about what is causing the bug.
-
-### Problem description
-{prompt}
+# Level 1: Identify which code area is buggy
+_AREA_PROMPT = """\
+You are an expert Python debugger. Given the buggy function below, identify \
+the {k} most suspicious code areas that could contain the bug.
 
 ### Buggy code
 ```python
 {buggy_code}
 ```
 
-For each hypothesis use this exact format:
+### Failing tests hint
+{prompt}
 
-HYPOTHESIS 1: [short title]
-EXPLANATION: [why this causes the observed failures]
-LOCATION: [line number, variable, or expression]
+For each area use exactly this format:
+
+AREA 1: [short name, e.g. "loop bounds", "return value", "condition check"]
+DESCRIPTION: [what this area does]
+SUSPICION: [why it might be causing the bug]
+
+AREA 2: ...
+
+Generate exactly {k} areas:"""
+
+# Level 1 evaluation: sure / likely / impossible (exactly as in the paper)
+_AREA_EVAL_PROMPT = """\
+Given this buggy Python code:
+
+```python
+{buggy_code}
+```
+
+Is the following code area likely to contain the bug?
+
+Area: {area}
+
+Reply with exactly one word — sure, likely, or impossible:"""
+
+# Level 2: Generate specific hypotheses given a code area
+_HYPOTHESIS_PROMPT = """\
+You are an expert Python debugger. Given the buggy function and the suspected \
+buggy area, generate {k} specific hypotheses about what exactly is wrong.
+
+### Buggy code
+```python
+{buggy_code}
+```
+
+### Suspected buggy area
+{area}
+
+For each hypothesis use exactly this format:
+
+HYPOTHESIS 1: [one sentence — what is wrong, e.g. "loop uses < instead of <="]
+LOCATION: [line or expression]
+IMPACT: [how this causes the test to fail]
 
 HYPOTHESIS 2: ...
 
 Generate exactly {k} hypotheses:"""
 
-_EVAL_PROMPT = """\
-Rate the following debugging hypothesis from 1 to 10 (10 = almost certainly correct).
+# Level 2 evaluation: sure / likely / impossible
+_HYPOTHESIS_EVAL_PROMPT = """\
+Given this buggy Python code:
 
-### Buggy code
 ```python
 {buggy_code}
 ```
 
-### Hypothesis
-{hypothesis}
+Does the following hypothesis correctly identify the bug?
 
-Reply with a single integer (1–10) and nothing else:"""
+Hypothesis: {hypothesis}
 
+Reply with exactly one word — sure, likely, or impossible:"""
+
+# Level 3: Generate concrete fixes
 _FIX_PROMPT = """\
-You are an expert Python programmer. Given the bug diagnosis below, generate {k} \
-distinct complete Python function implementations that fix the bug.
-
-### Problem description
-{prompt}
+You are an expert Python programmer. Given the bug diagnosis below, write \
+{k} distinct complete Python implementations that fix the bug.
 
 ### Buggy code
 ```python
 {buggy_code}
 ```
 
-### Bug diagnosis
+### Bug area
+{area}
+
+### Specific diagnosis
 {hypothesis}
 
-Format each fix exactly as:
+Format each fix as:
 
 FIX 1:
 ```python
-[complete function]
+[complete fixed function]
 ```
 
 FIX 2:
 ```python
-[complete function]
+[complete fixed function]
 ```
 
 Generate exactly {k} fixes:"""
+
+
+# Score mapping: paper uses sure/likely/impossible
+_SCORE_MAP = {"sure": 1.0, "likely": 0.5, "impossible": 0.0}
 
 
 # ── Main class ────────────────────────────────────────────────────────────────
 
 class ToTDebugger:
     """
-    Tree of Thoughts debugger.
+    Tree of Thoughts debugger with depth-3 thought tree.
 
     Parameters
     ----------
     llm            : LLMClient
     executor       : CodeExecutor
-    k              : branching factor (candidates per level)
+    k              : branching factor (paper uses b=5)
     search         : "bfs" | "dfs" | "mcts"
-    evaluator      : "llm" | "execution" | "hybrid"
-    n_simulations  : MCTS iterations per problem (default 12)
-    exploration    : MCTS UCB1 exploration constant C (default √2)
+    evaluator      : "llm" (sure/likely/impossible, matches paper) |
+                     "hybrid" | "execution"
+    n_simulations  : MCTS rollouts (default 12)
+    exploration    : MCTS UCB1 constant C (default √2)
     """
 
     def __init__(
         self,
         llm: LLMClient,
         executor: CodeExecutor,
-        k: int = 3,
+        k: int = 5,
         search: str = "bfs",
-        evaluator: str = "hybrid",
+        evaluator: str = "llm",
         n_simulations: int = 12,
         exploration: float = math.sqrt(2),
     ):
@@ -199,32 +252,67 @@ class ToTDebugger:
         result.bug_type = problem.bug_type
         return result
 
-    # ── BFS ───────────────────────────────────────────────────────────────────
+    # ── BFS (depth-3, matches paper) ──────────────────────────────────────────
 
     def _bfs_solve(self, problem: Problem) -> DebugResult:
+        """
+        BFS over 3-level tree.
+        Level 1: Generate k areas, evaluate all, prune impossible, keep top-k.
+        Level 2: For each surviving area, generate k hypotheses, evaluate,
+                 prune impossible, keep top-k across all areas combined.
+        Level 3: For each surviving hypothesis, generate k fixes, execute.
+        First passing fix is returned immediately.
+        """
         nodes_explored = 0
         total_tokens = 0
+        first_node = True
 
-        # Level 1 – hypotheses
-        hypotheses = self._generate_hypotheses(problem)
-        total_tokens += sum(h.tokens_used for h in hypotheses)
-        nodes_explored += len(hypotheses)
+        # ── Level 1: Areas ────────────────────────────────────────────────────
+        areas, tok = self._generate_areas(problem)
+        total_tokens += tok
+        nodes_explored += len(areas)
 
-        for h in hypotheses:
-            score, tok = self._score_hypothesis(h, problem)
-            h.score = score
+        for area in areas:
+            score, tok = self._score_area(area, problem)
+            area.score = score
             total_tokens += tok
 
-        hypotheses.sort(key=lambda x: x.score, reverse=True)
-        top = hypotheses[: self.k]
+        # Prune impossible areas (score == 0), keep top-k survivors
+        areas = [a for a in areas if a.score > 0]
+        areas.sort(key=lambda x: x.score, reverse=True)
+        top_areas = areas[: self.k]
 
-        # Level 2 – fixes for all top hypotheses (BFS breadth)
-        first_node = True
-        for hypothesis in top:
-            fixes = self._generate_fixes(hypothesis, problem)
-            hypothesis.children = fixes
-            total_tokens += sum(f.tokens_used for f in fixes)
+        if not top_areas:
+            return self._failure(problem, "tot-bfs", nodes_explored, 0, total_tokens)
+
+        # ── Level 2: Hypotheses ───────────────────────────────────────────────
+        all_hypotheses: list[ThoughtNode] = []
+        for area in top_areas:
+            hyps, tok = self._generate_hypotheses(area, problem)
+            total_tokens += tok
+            nodes_explored += len(hyps)
+            for h in hyps:
+                score, tok2 = self._score_hypothesis(h, area, problem)
+                h.score = score
+                total_tokens += tok2
+            area.children = hyps
+            all_hypotheses.extend(hyps)
+
+        # Prune impossible hypotheses, keep global top-k
+        all_hypotheses = [h for h in all_hypotheses if h.score > 0]
+        all_hypotheses.sort(key=lambda x: x.score, reverse=True)
+        top_hypotheses = all_hypotheses[: self.k]
+
+        if not top_hypotheses:
+            return self._failure(problem, "tot-bfs", nodes_explored, 0, total_tokens)
+
+        # ── Level 3: Fixes + execution ────────────────────────────────────────
+        for hypothesis in top_hypotheses:
+            area_node = hypothesis.parent
+            fixes, tok = self._generate_fixes(area_node, hypothesis, problem)
+            total_tokens += tok
             nodes_explored += len(fixes)
+            hypothesis.children = fixes
 
             for fix_node in fixes:
                 result = self.executor.execute(fix_node.fix_code, problem.test_code)
@@ -243,105 +331,113 @@ class ToTDebugger:
                     )
                 first_node = False
 
-        return DebugResult(
-            task_id=problem.task_id,
-            method=f"tot-bfs-k{self.k}",
-            success=False,
-            fix_code=None,
-            nodes_explored=nodes_explored,
-            backtracks=0,
-            total_tokens=total_tokens,
-            time_elapsed=0,
-            first_attempt_success=False,
-        )
+        return self._failure(problem, f"tot-bfs-k{self.k}", nodes_explored, 0, total_tokens)
 
-    # ── DFS ───────────────────────────────────────────────────────────────────
+    # ── DFS (depth-3, 2-level backtracking) ───────────────────────────────────
 
     def _dfs_solve(self, problem: Problem) -> DebugResult:
+        """
+        DFS over 3-level tree with 2-level backtracking.
+        Greedy: pick best area → best hypothesis → try all k fixes.
+        Backtrack order: hypothesis level first, then area level.
+        Impossible states are pruned without expansion (matches paper).
+        """
         nodes_explored = 0
         total_tokens = 0
         backtracks = 0
         first_overall = True
 
-        hypotheses = self._generate_hypotheses(problem)
-        total_tokens += sum(h.tokens_used for h in hypotheses)
-        nodes_explored += len(hypotheses)
+        # ── Level 1: Areas ────────────────────────────────────────────────────
+        areas, tok = self._generate_areas(problem)
+        total_tokens += tok
+        nodes_explored += len(areas)
 
-        for h in hypotheses:
-            score, tok = self._score_hypothesis(h, problem)
-            h.score = score
+        for area in areas:
+            score, tok = self._score_area(area, problem)
+            area.score = score
             total_tokens += tok
 
-        hypotheses.sort(key=lambda x: x.score, reverse=True)
+        # Prune impossible, sort by score descending
+        areas = [a for a in areas if a.score > 0]
+        areas.sort(key=lambda x: x.score, reverse=True)
 
-        for hypothesis in hypotheses:
-            fixes = self._generate_fixes(hypothesis, problem)
-            hypothesis.children = fixes
-            total_tokens += sum(f.tokens_used for f in fixes)
-            nodes_explored += len(fixes)
+        for area in areas:
+            # ── Level 2: Hypotheses for this area ─────────────────────────────
+            hyps, tok = self._generate_hypotheses(area, problem)
+            total_tokens += tok
+            nodes_explored += len(hyps)
 
-            for i, fix_node in enumerate(fixes):
-                result = self.executor.execute(fix_node.fix_code, problem.test_code)
-                fix_node.test_result = result
-                if result["passed"]:
-                    return DebugResult(
-                        task_id=problem.task_id,
-                        method=f"tot-dfs-k{self.k}",
-                        success=True,
-                        fix_code=fix_node.fix_code,
-                        nodes_explored=nodes_explored,
-                        backtracks=backtracks,
-                        total_tokens=total_tokens,
-                        time_elapsed=0,
-                        first_attempt_success=(first_overall and i == 0),
-                    )
-                first_overall = False
+            for h in hyps:
+                score, tok2 = self._score_hypothesis(h, area, problem)
+                h.score = score
+                total_tokens += tok2
 
-            # All fixes for this hypothesis failed → backtrack
+            hyps = [h for h in hyps if h.score > 0]
+            hyps.sort(key=lambda x: x.score, reverse=True)
+            area.children = hyps
+
+            for hypothesis in hyps:
+                # ── Level 3: Fixes ─────────────────────────────────────────────
+                fixes, tok = self._generate_fixes(area, hypothesis, problem)
+                total_tokens += tok
+                nodes_explored += len(fixes)
+                hypothesis.children = fixes
+
+                for i, fix_node in enumerate(fixes):
+                    result = self.executor.execute(fix_node.fix_code, problem.test_code)
+                    fix_node.test_result = result
+                    if result["passed"]:
+                        return DebugResult(
+                            task_id=problem.task_id,
+                            method=f"tot-dfs-k{self.k}",
+                            success=True,
+                            fix_code=fix_node.fix_code,
+                            nodes_explored=nodes_explored,
+                            backtracks=backtracks,
+                            total_tokens=total_tokens,
+                            time_elapsed=0,
+                            first_attempt_success=(first_overall and i == 0),
+                        )
+                    first_overall = False
+
+                # All fixes for this hypothesis failed → backtrack to next hypothesis
+                backtracks += 1
+
+            # All hypotheses for this area failed → backtrack to next area
             backtracks += 1
 
-        return DebugResult(
-            task_id=problem.task_id,
-            method=f"tot-dfs-k{self.k}",
-            success=False,
-            fix_code=None,
-            nodes_explored=nodes_explored,
-            backtracks=backtracks,
-            total_tokens=total_tokens,
-            time_elapsed=0,
-            first_attempt_success=False,
-        )
+        return self._failure(problem, f"tot-dfs-k{self.k}", nodes_explored, backtracks, total_tokens)
 
     # ── MCTS ──────────────────────────────────────────────────────────────────
 
     def _mcts_solve(self, problem: Problem) -> DebugResult:
         """
-        Monte Carlo Tree Search over bug hypotheses.
-
-        Tree structure:
-          root (virtual) → MCTSNode per hypothesis → rollout (generate fix + execute)
-
-        Each iteration:
-          1. Selection   — walk tree via UCB1 to find the most promising leaf
-          2. Expansion   — if the leaf has no children, generate k new hypotheses
-          3. Simulation  — generate one fix for the selected node, run tests (reward 0/1)
-          4. Backprop    — update visits and wins up to root
+        MCTS over hypothesis nodes with test execution as reward.
+        Operates at the hypothesis level (level 2); areas are generated
+        once to seed the hypothesis pool.
+        UCB1 allocates more rollouts to promising hypotheses over time.
         """
         total_tokens = 0
         nodes_explored = 0
         best_fix: Optional[str] = None
         first_attempt_success = False
 
-        # Root holds the initial hypothesis pool (expanded once)
         root = MCTSNode(hypothesis="root")
-        self._last_mcts_root = root  # expose for visualization
+        self._last_mcts_root = root
 
-        # Seed root with k initial hypotheses
-        hypotheses = self._generate_hypotheses(problem)
-        total_tokens += sum(h.tokens_used for h in hypotheses)
-        for h in hypotheses:
-            child = MCTSNode(hypothesis=h.content, parent=root, tokens_used=h.tokens_used)
-            root.children.append(child)
+        # Seed root: generate areas then hypotheses from each area
+        areas, tok = self._generate_areas(problem)
+        total_tokens += tok
+        for area in areas:
+            hyps, tok2 = self._generate_hypotheses(area, problem)
+            total_tokens += tok2
+            for h in hyps:
+                child = MCTSNode(
+                    hypothesis=f"[{area.content[:30]}] {h.content}",
+                    parent=root,
+                    tokens_used=h.tokens_used,
+                )
+                root.children.append(child)
         nodes_explored += len(root.children)
 
         for sim in range(self.n_simulations):
@@ -351,38 +447,37 @@ class ToTDebugger:
                 node = node.best_child(self.exploration)
 
             # ── 2. Expansion ───────────────────────────────────────────────
-            # If this node has been visited before, expand with a new hypothesis
             if node.visits > 0 and node is not root:
-                new_hyps = self._generate_hypotheses(problem)
-                total_tokens += sum(h.tokens_used for h in new_hyps)
-                for h in new_hyps:
-                    already = any(c.hypothesis == h.content for c in root.children)
-                    if not already:
-                        child = MCTSNode(hypothesis=h.content, parent=root, tokens_used=h.tokens_used)
-                        root.children.append(child)
-                        nodes_explored += 1
-                # Re-select after expansion
+                new_areas, tok = self._generate_areas(problem)
+                total_tokens += tok
+                for area in new_areas[:1]:   # one new area per expansion
+                    new_hyps, tok2 = self._generate_hypotheses(area, problem)
+                    total_tokens += tok2
+                    for h in new_hyps[:self.k]:
+                        label = f"[{area.content[:30]}] {h.content}"
+                        if not any(c.hypothesis == label for c in root.children):
+                            child = MCTSNode(hypothesis=label, parent=root, tokens_used=h.tokens_used)
+                            root.children.append(child)
+                            nodes_explored += 1
                 node = root.best_child(self.exploration)
 
             # ── 3. Simulation (rollout) ────────────────────────────────────
-            # Generate one fix for this hypothesis and run the tests
-            thought = ThoughtNode(content=node.hypothesis, depth=1, node_type="hypothesis")
-            fixes = self._generate_fixes(thought, problem)
-            total_tokens += sum(f.tokens_used for f in fixes)
+            thought = ThoughtNode(content=node.hypothesis, depth=2, node_type="hypothesis")
+            area_dummy = ThoughtNode(content="", depth=1, node_type="area")
+            fixes, tok = self._generate_fixes(area_dummy, thought, problem)
+            total_tokens += tok
             nodes_explored += len(fixes)
 
             reward = 0.0
             for fix_node in fixes:
                 result = self.executor.execute(fix_node.fix_code, problem.test_code)
-                fix_node.test_result = result
                 if result["passed"]:
                     reward = 1.0
                     if best_fix is None:
                         best_fix = fix_node.fix_code
                         first_attempt_success = (sim == 0)
                     break
-                # Partial reward: fraction of passing tests (encourages progress)
-                elif result["stderr"] == "" and result["stdout"] != "":
+                elif not result.get("stderr", ""):
                     reward = max(reward, 0.1)
 
             node.fix_code = fixes[0].fix_code if fixes else None
@@ -394,16 +489,10 @@ class ToTDebugger:
                 current.wins += reward
                 current = current.parent
 
-            if best_fix is not None and reward == 1.0:
-                # Early exit if we already found a passing fix
-                # (continue remaining simulations to improve hypothesis ranking stats)
-                pass
-
-        success = best_fix is not None
         return DebugResult(
             task_id=problem.task_id,
             method=f"mcts-k{self.k}-s{self.n_simulations}",
-            success=success,
+            success=best_fix is not None,
             fix_code=best_fix,
             nodes_explored=nodes_explored,
             backtracks=0,
@@ -412,38 +501,110 @@ class ToTDebugger:
             first_attempt_success=first_attempt_success,
         )
 
-    # ── Thought generation ────────────────────────────────────────────────────
+    # ── Level 1: Area generation and evaluation ────────────────────────────────
 
-    def _generate_hypotheses(self, problem: Problem) -> list[ThoughtNode]:
+    def _generate_areas(self, problem: Problem) -> tuple[list[ThoughtNode], int]:
+        prompt = _AREA_PROMPT.format(
+            k=self.k,
+            buggy_code=problem.buggy_code.strip(),
+            prompt=problem.prompt.strip()[:300],
+        )
+        resp = self.llm.call(prompt, max_tokens=600)
+        parsed = _parse_areas(resp["content"])
+        if not parsed:
+            parsed = [f"Area {i+1}: general code logic" for i in range(self.k)]
+        nodes = [
+            ThoughtNode(content=a, depth=1, node_type="area",
+                        tokens_used=resp["tokens"] // max(len(parsed), 1))
+            for a in parsed[: self.k]
+        ]
+        return nodes, resp["tokens"]
+
+    def _score_area(self, area: ThoughtNode, problem: Problem) -> tuple[float, int]:
+        if self.evaluator != "llm":
+            return 0.5, 0   # neutral score for non-LLM evaluators
+        prompt = _AREA_EVAL_PROMPT.format(
+            buggy_code=problem.buggy_code.strip(),
+            area=area.content.strip(),
+        )
+        resp = self.llm.call(prompt, max_tokens=10)
+        score = _parse_sure_likely_impossible(resp["content"])
+        return score, resp["tokens"]
+
+    # ── Level 2: Hypothesis generation and evaluation ──────────────────────────
+
+    def _generate_hypotheses(self, area: ThoughtNode, problem: Problem) -> tuple[list[ThoughtNode], int]:
         prompt = _HYPOTHESIS_PROMPT.format(
             k=self.k,
-            prompt=problem.prompt.strip(),
             buggy_code=problem.buggy_code.strip(),
+            area=area.content.strip() if area.content else "the code logic",
         )
-        resp = self.llm.call(prompt)
+        resp = self.llm.call(prompt, max_tokens=800)
         parsed = _parse_hypotheses(resp["content"])
         if not parsed:
-            parsed = [f"Generic fix attempt {i+1}" for i in range(self.k)]
-        return [
-            ThoughtNode(content=h, depth=1, node_type="hypothesis", tokens_used=resp["tokens"] // max(len(parsed), 1))
+            parsed = [f"Generic hypothesis {i+1}" for i in range(self.k)]
+        nodes = [
+            ThoughtNode(content=h, depth=2, node_type="hypothesis",
+                        parent=area,
+                        tokens_used=resp["tokens"] // max(len(parsed), 1))
             for h in parsed[: self.k]
         ]
+        return nodes, resp["tokens"]
 
-    def _generate_fixes(self, hypothesis: ThoughtNode, problem: Problem) -> list[ThoughtNode]:
+    def _score_hypothesis(self, node: ThoughtNode, area: ThoughtNode, problem: Problem) -> tuple[float, int]:
+        if self.evaluator == "execution":
+            return self._execution_score(node, problem)
+        if self.evaluator == "hybrid":
+            llm_score, tok = self._llm_score_hypothesis(node, problem)
+            exec_score, _ = self._execution_score(node, problem)
+            return 0.6 * llm_score + 0.4 * exec_score, tok
+        return self._llm_score_hypothesis(node, problem)
+
+    def _llm_score_hypothesis(self, node: ThoughtNode, problem: Problem) -> tuple[float, int]:
+        prompt = _HYPOTHESIS_EVAL_PROMPT.format(
+            buggy_code=problem.buggy_code.strip(),
+            hypothesis=node.content.strip(),
+        )
+        resp = self.llm.call(prompt, max_tokens=10)
+        score = _parse_sure_likely_impossible(resp["content"])
+        return score, resp["tokens"]
+
+    def _execution_score(self, node: ThoughtNode, problem: Problem) -> tuple[float, int]:
+        quick_prompt = (
+            f"Fix this bug based on the hypothesis below.\n"
+            f"Hypothesis: {node.content}\n\n"
+            f"Code:\n```python\n{problem.buggy_code}\n```\n"
+            "Return only the fixed function in ```python``` fences:"
+        )
+        resp = self.llm.call(quick_prompt, max_tokens=400)
+        codes = _parse_fixes(resp["content"])
+        if codes:
+            result = self.executor.execute(codes[0], problem.test_code)
+            return (1.0 if result["passed"] else 0.2), resp["tokens"]
+        return 0.1, resp["tokens"]
+
+    # ── Level 3: Fix generation ────────────────────────────────────────────────
+
+    def _generate_fixes(
+        self,
+        area: ThoughtNode,
+        hypothesis: ThoughtNode,
+        problem: Problem,
+    ) -> tuple[list[ThoughtNode], int]:
         prompt = _FIX_PROMPT.format(
             k=self.k,
-            prompt=problem.prompt.strip(),
             buggy_code=problem.buggy_code.strip(),
+            area=area.content.strip() if area.content else "unknown area",
             hypothesis=hypothesis.content.strip(),
         )
-        resp = self.llm.call(prompt)
+        resp = self.llm.call(prompt, max_tokens=800)
         codes = _parse_fixes(resp["content"])
         if not codes:
             codes = [problem.buggy_code]
-        return [
+        nodes = [
             ThoughtNode(
                 content=f"Fix for: {hypothesis.content[:60]}",
-                depth=2,
+                depth=3,
                 node_type="fix",
                 parent=hypothesis,
                 fix_code=c,
@@ -451,56 +612,58 @@ class ToTDebugger:
             )
             for c in codes[: self.k]
         ]
+        return nodes, resp["tokens"]
 
-    # ── Hypothesis evaluation ─────────────────────────────────────────────────
+    # ── Helpers ────────────────────────────────────────────────────────────────
 
-    def _score_hypothesis(self, node: ThoughtNode, problem: Problem) -> tuple[float, int]:
-        if self.evaluator == "execution":
-            return self._execution_score(node, problem)
-        if self.evaluator == "hybrid":
-            llm_score, tok = self._llm_score(node, problem)
-            exec_score, _ = self._execution_score(node, problem)
-            return 0.6 * llm_score + 0.4 * exec_score, tok
-        return self._llm_score(node, problem)
-
-    def _llm_score(self, node: ThoughtNode, problem: Problem) -> tuple[float, int]:
-        prompt = _EVAL_PROMPT.format(
-            buggy_code=problem.buggy_code.strip(),
-            hypothesis=node.content.strip(),
+    def _failure(self, problem: Problem, method: str, nodes: int, backtracks: int, tokens: int) -> DebugResult:
+        return DebugResult(
+            task_id=problem.task_id,
+            method=method,
+            success=False,
+            fix_code=None,
+            nodes_explored=nodes,
+            backtracks=backtracks,
+            total_tokens=tokens,
+            time_elapsed=0,
+            first_attempt_success=False,
         )
-        resp = self.llm.call(prompt, max_tokens=10)
-        score = _parse_score(resp["content"])
-        return score / 10.0, resp["tokens"]
-
-    def _execution_score(self, node: ThoughtNode, problem: Problem) -> tuple[float, int]:
-        # Ask LLM for a quick fix and test it
-        quick_prompt = (
-            f"Given this bug hypothesis:\n{node.content}\n\n"
-            f"Fix this code in one attempt:\n```python\n{problem.buggy_code}\n```\n"
-            "Reply with only the complete fixed function inside ```python``` fences:"
-        )
-        resp = self.llm.call(quick_prompt, max_tokens=400)
-        codes = _parse_fixes(resp["content"])
-        if codes:
-            result = self.executor.execute(codes[0], problem.test_code)
-            score = 1.0 if result["passed"] else 0.2
-        else:
-            score = 0.1
-        return score, resp["tokens"]
 
 
 # ── Parsing helpers ────────────────────────────────────────────────────────────
+
+def _parse_sure_likely_impossible(text: str) -> float:
+    """Convert sure/likely/impossible to numeric score (matches paper's scheme)."""
+    text = text.strip().lower()
+    for word, score in _SCORE_MAP.items():
+        if word in text:
+            return score
+    # Fallback: treat any response as likely
+    return 0.5
+
+
+def _parse_areas(text: str) -> list[str]:
+    blocks = re.split(r"\n?AREA\s+\d+\s*:", text, flags=re.IGNORECASE)
+    results = []
+    for block in blocks[1:]:
+        block = re.sub(r"\n(DESCRIPTION|SUSPICION)\s*:", r" \1:", block, flags=re.IGNORECASE)
+        block = block.strip()
+        if block:
+            results.append(block.strip())
+    if not results:
+        for m in re.finditer(r"^\d+\.\s+(.+?)(?=\n\d+\.|\Z)", text, re.DOTALL | re.MULTILINE):
+            results.append(m.group(1).strip())
+    return results
+
 
 def _parse_hypotheses(text: str) -> list[str]:
     blocks = re.split(r"\n?HYPOTHESIS\s+\d+\s*:", text, flags=re.IGNORECASE)
     results = []
     for block in blocks[1:]:
+        block = re.sub(r"\n(LOCATION|IMPACT)\s*:", r" \1:", block, flags=re.IGNORECASE)
         block = block.strip()
-        # Collapse whitespace between sections
-        block = re.sub(r"\n(EXPLANATION|LOCATION)\s*:", r" \1:", block, flags=re.IGNORECASE)
         if block:
             results.append(block.strip())
-    # Fallback: split numbered list
     if not results:
         for m in re.finditer(r"^\d+\.\s+(.+?)(?=\n\d+\.|\Z)", text, re.DOTALL | re.MULTILINE):
             results.append(m.group(1).strip())
@@ -508,11 +671,9 @@ def _parse_hypotheses(text: str) -> list[str]:
 
 
 def _parse_fixes(text: str) -> list[str]:
-    # Extract ```python ... ``` blocks
     codes = re.findall(r"```python\s*(.*?)```", text, re.DOTALL)
     if codes:
         return [c.strip() for c in codes if c.strip()]
-    # Fallback: extract FIX N: sections
     blocks = re.split(r"\nFIX\s+\d+\s*:", text, flags=re.IGNORECASE)
     results = []
     for block in blocks[1:]:
@@ -522,8 +683,4 @@ def _parse_fixes(text: str) -> list[str]:
     return results
 
 
-def _parse_score(text: str) -> float:
-    match = re.search(r"\b([1-9]|10)\b", text.strip())
-    if match:
-        return float(match.group(1))
-    return 5.0
+_SCORE_MAP = {"sure": 1.0, "likely": 0.5, "impossible": 0.0}

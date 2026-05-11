@@ -24,7 +24,7 @@ from typing import Optional
 import config
 from llm_client import LLMClient, MockLLMClient
 from executor import CodeExecutor
-from data_loader import load_humaneval_bugs, Problem
+from data_loader import load_humaneval_bugs, load_debugbench, Problem
 from tot_debugger import ToTDebugger, DebugResult
 from baselines import IOBaseline, CoTBaseline, CoTSCBaseline
 from evaluate import (
@@ -67,10 +67,14 @@ def main():
     parser.add_argument("--demo", action="store_true", help="Run offline demo with mock LLM")
     parser.add_argument("--n", type=int, default=config.NUM_PROBLEMS, help="Number of problems")
     parser.add_argument("--k", type=int, default=config.TOT_K, help="Branching factor")
-    parser.add_argument("--search", choices=["bfs", "dfs", "both"], default="bfs")
+    parser.add_argument("--search", choices=["bfs", "dfs", "mcts", "both"], default="bfs")
     parser.add_argument("--evaluator", choices=["llm", "execution", "hybrid"], default=config.EVALUATOR)
     parser.add_argument("--baselines", action="store_true", help="Also run IO, CoT, CoT-SC baselines")
     parser.add_argument("--both", action="store_true", help="Run both BFS and DFS")
+    parser.add_argument("--dataset", choices=["humaneval", "debugbench"], default="humaneval",
+                        help="Dataset to use (default: humaneval)")
+    parser.add_argument("--bug-types", nargs="+", default=["Logic Error"],
+                        help="DebugBench bug type filter (default: Logic Error)")
     parser.add_argument("--out", type=str, default=config.RESULTS_DIR, help="Output directory")
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--quiet", action="store_true")
@@ -97,8 +101,11 @@ def main():
     executor = CodeExecutor()
 
     # ── Load data ──────────────────────────────────────────────────────────────
-    print(f"[run_experiments] Loading {args.n} problems (seed={args.seed})...")
-    problems = load_humaneval_bugs(n=args.n, use_synthetic=True, seed=args.seed)
+    print(f"[run_experiments] Loading {args.n} problems from {args.dataset} (seed={args.seed})...")
+    if args.dataset == "debugbench":
+        problems = load_debugbench(n=args.n, bug_types=args.bug_types, seed=args.seed)
+    else:
+        problems = load_humaneval_bugs(n=args.n, use_synthetic=True, seed=args.seed)
     print(f"  Loaded {len(problems)} problems: {set(p.bug_type for p in problems)}\n")
 
     os.makedirs(args.out, exist_ok=True)

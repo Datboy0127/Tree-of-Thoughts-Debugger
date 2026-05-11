@@ -175,29 +175,156 @@ def _load_synthetic_humaneval(n: Optional[int], seed: int = None) -> list[Proble
     return raw
 
 
-def load_debugbench(n: int = None, lang: str = "python") -> list[Problem]:
-    """Load DebugBench from HuggingFace ('Rtian/DebugBench')."""
+def load_debugbench(
+    n: int = None,
+    bug_types: list = None,
+    seed: int = None,
+) -> list[Problem]:
+    """
+    Load DebugBench (Python3) from HuggingFace ('Rtian/DebugBench').
+
+    bug_types: filter to specific categories, e.g. ['Logic Error'].
+               Options: 'Logic Error', 'Syntax Error', 'Reference Error', 'Multiple Error'.
+               Default: ['Logic Error'] — hardest category, best for demonstrating ToT advantage.
+    """
+    if bug_types is None:
+        bug_types = ["Logic Error"]
+    if seed is not None:
+        random.seed(seed)
+
     try:
         from datasets import load_dataset  # type: ignore
         ds = load_dataset("Rtian/DebugBench", split="test")
-        problems = []
-        for item in ds:
-            if item.get("language", "").lower() != lang:
-                continue
-            p = Problem(
-                task_id=item.get("id", str(len(problems))),
-                prompt=item.get("description", ""),
-                buggy_code=item.get("buggy_solution", ""),
-                test_code=item.get("test", ""),
-                canonical_solution=item.get("canonical_solution", ""),
-                bug_type=item.get("bug_type", "unknown"),
-            )
-            problems.append(p)
-            if n and len(problems) >= n:
-                break
-        return problems
     except Exception as e:
-        raise RuntimeError(f"DebugBench load failed: {e}. See data/README.md for setup.")
+        raise RuntimeError(f"DebugBench load failed: {e}. Run: pip install datasets")
+
+    problems = []
+    for item in ds:
+        # DebugBench actual field names
+        lang = item.get("language", "")
+        if lang != "Python3":
+            continue
+        btype = item.get("bug_type", "")
+        if bug_types and btype not in bug_types:
+            continue
+
+        buggy_code  = item.get("bug_source_code", "")
+        correct_code = item.get("source_code", "")
+        description  = item.get("description", "")
+        task_id      = item.get("task_id", str(len(problems)))
+
+        if not buggy_code or not correct_code:
+            continue
+
+        test_code = _build_debugbench_tests(description, correct_code)
+        if not test_code:
+            continue
+
+        p = Problem(
+            task_id=task_id,
+            prompt=description[:500],       # first 500 chars as context
+            buggy_code=buggy_code,
+            test_code=test_code,
+            canonical_solution=correct_code,
+            bug_type=btype,
+        )
+        problems.append(p)
+        if n and len(problems) >= n:
+            break
+
+    if seed is not None:
+        random.shuffle(problems)
+    print(f"[data_loader] Loaded {len(problems)} DebugBench problems "
+          f"(bug_types={bug_types})")
+    return problems[:n] if n else problems
+
+
+def _extract_solution_method(code: str) -> Optional[str]:
+    """Extract the first method name from a LeetCode class Solution."""
+    m = re.search(r"def\s+(\w+)\s*\(self", code)
+    return m.group(1) if m else None
+
+
+def _build_debugbench_tests(description: str, correct_code: str) -> str:
+    """
+    Parse LeetCode-style examples from the description and build executable
+    Python assertions against the correct Solution class.
+
+    Example description snippet:
+        Input: nums = [2,7,11,15], target = 9
+        Output: [0,1]
+    """
+    method = _extract_solution_method(correct_code)
+    if not method:
+        return ""
+
+    # Find all Example blocks
+    example_pattern = re.compile(
+        r"Input:\s*(.*?)\s*Output:\s*(.*?)(?=Example|\Z|Constraints|Note|Explanation)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    matches = example_pattern.findall(description)
+    if not matches:
+        return ""
+
+    assertions = []
+    for raw_input, raw_output in matches:
+        try:
+            args = _parse_leetcode_args(raw_input.strip())
+            expected = _parse_leetcode_value(raw_output.strip().split("\n")[0])
+            if args is None or expected is None:
+                continue
+            call = f"Solution().{method}({args})"
+            assertions.append(f"assert {call} == {expected!r}")
+        except Exception:
+            continue
+
+    if not assertions:
+        return ""
+
+    # Prepend correct solution so the test file is self-contained
+    return correct_code + "\n" + "\n".join(assertions) + "\n"
+
+
+def _parse_leetcode_args(raw: str) -> Optional[str]:
+    """
+    Convert 'nums = [2,7,11,15], target = 9' -> '[2,7,11,15], 9'
+    Returns a string suitable for function call arguments.
+    """
+    # Remove variable names, keep values in order
+    parts = []
+    for segment in raw.split(","):
+        segment = segment.strip()
+        if "=" in segment:
+            val = segment.split("=", 1)[1].strip()
+        else:
+            val = segment
+        # Handle multi-word values that got split (e.g. nested lists)
+        parts.append(val)
+
+    # Re-join carefully: brackets may have been split
+    joined = ", ".join(parts)
+    try:
+        # Validate it's parseable
+        ast.literal_eval(f"({joined},)")
+        return joined
+    except Exception:
+        # Try a simpler approach: extract all Python literals in order
+        literals = re.findall(r'(\[.*?\]|-?\d+\.?\d*|"[^"]*"|\'[^\']*\'|True|False|None)', raw)
+        if literals:
+            return ", ".join(literals)
+        return None
+
+
+def _parse_leetcode_value(raw: str) -> Optional[object]:
+    """Parse a single output value like '[0,1]' or '24' or 'true'."""
+    raw = raw.strip().rstrip(".")
+    # LeetCode uses lowercase true/false/null
+    raw = raw.replace("true", "True").replace("false", "False").replace("null", "None")
+    try:
+        return ast.literal_eval(raw)
+    except Exception:
+        return None
 
 
 def save_problems(problems: list[Problem], path: str):
