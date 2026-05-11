@@ -441,6 +441,10 @@ class ToTDebugger:
         nodes_explored += len(root.children)
 
         for sim in range(self.n_simulations):
+            # Early stopping: a passing fix was found in a previous simulation
+            if best_fix is not None:
+                break
+
             # ── 1. Selection ───────────────────────────────────────────────
             node = root
             while not node.is_leaf() and node.visits > 0:
@@ -462,9 +466,12 @@ class ToTDebugger:
                 node = root.best_child(self.exploration)
 
             # ── 3. Simulation (rollout) ────────────────────────────────────
+            # Extract area prefix from hypothesis string "[area] hypothesis"
+            _m = re.match(r"\[([^\]]+)\]", node.hypothesis)
+            area_text = _m.group(1) if _m else ""
+            area_node = ThoughtNode(content=area_text, depth=1, node_type="area")
             thought = ThoughtNode(content=node.hypothesis, depth=2, node_type="hypothesis")
-            area_dummy = ThoughtNode(content="", depth=1, node_type="area")
-            fixes, tok = self._generate_fixes(area_dummy, thought, problem)
+            fixes, tok = self._generate_fixes(area_node, thought, problem)
             total_tokens += tok
             nodes_explored += len(fixes)
 
@@ -681,6 +688,3 @@ def _parse_fixes(text: str) -> list[str]:
         if code:
             results.append(code)
     return results
-
-
-_SCORE_MAP = {"sure": 1.0, "likely": 0.5, "impossible": 0.0}
