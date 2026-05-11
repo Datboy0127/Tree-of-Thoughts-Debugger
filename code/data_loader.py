@@ -183,12 +183,17 @@ def load_debugbench(
     """
     Load DebugBench (Python3) from HuggingFace ('Rtian/DebugBench').
 
-    bug_types: filter to specific categories, e.g. ['Logic Error'].
-               Options: 'Logic Error', 'Syntax Error', 'Reference Error', 'Multiple Error'.
-               Default: ['Logic Error'] — hardest category, best for demonstrating ToT advantage.
+    Actual schema (confirmed):
+      buggy_code, solution, language (lowercase), category (lowercase),
+      question, examples, constraints, slug, subtype, level
+
+    bug_types: filter by category, e.g. ['logic error'] or ['Logic Error']
+               (matching is case-insensitive).
+               Options: 'logic error', 'syntax error', 'reference error', 'multiple error'.
+               Default: ['logic error'] — hardest, best for demonstrating ToT advantage.
     """
     if bug_types is None:
-        bug_types = ["Logic Error"]
+        bug_types = ["logic error"]
     if seed is not None:
         random.seed(seed)
 
@@ -198,74 +203,50 @@ def load_debugbench(
     except Exception as e:
         raise RuntimeError(f"DebugBench load failed: {e}. Run: pip install datasets")
 
-    # ── Diagnose schema on first item ─────────────────────────────────────────
-    _first = ds[0] if len(ds) > 0 else {}
-    print(f"[data_loader] DebugBench columns: {list(_first.keys())}")
-    # Sample values for language and bug_type fields
-    for _col in ("language", "bug_type", "bug_category", "type"):
-        if _col in _first:
-            _vals = set(item.get(_col, "") for item in ds)
-            print(f"  {_col!r} unique values: {sorted(_vals)[:10]}")
+    # Case-insensitive filter set
+    _bug_types_lower = {b.lower().strip() for b in bug_types}
 
-    # ── Detect field names from actual schema ─────────────────────────────────
-    _sample = _first
-    # Buggy code field
-    _buggy_field = next(
-        (f for f in ("bug_source_code", "bug_code", "buggy_code", "bugCode")
-         if f in _sample), None
-    )
-    # Correct code field
-    _correct_field = next(
-        (f for f in ("source_code", "correct_code", "solution", "correctCode")
-         if f in _sample), None
-    )
-    # Language field
-    _lang_field = next(
-        (f for f in ("language", "lang", "programming_language") if f in _sample), None
-    )
-    # Bug type field
-    _btype_field = next(
-        (f for f in ("bug_type", "bug_category", "type", "category", "error_type")
-         if f in _sample), None
-    )
-    print(f"  Using: buggy={_buggy_field!r}  correct={_correct_field!r}  "
-          f"lang={_lang_field!r}  btype={_btype_field!r}")
-
-    # Normalise bug_types filter for case-insensitive matching
-    _bug_types_lower = {b.lower() for b in bug_types} if bug_types else set()
-
+    skipped_lang = skipped_type = skipped_code = skipped_tests = 0
     problems = []
     for item in ds:
-        # Language filter (case-insensitive, accept "Python3", "python3", "Python")
-        lang = item.get(_lang_field, "") if _lang_field else ""
-        if lang.lower() not in ("python3", "python"):
+        # Language filter — dataset uses lowercase ("python3", "java", "cpp")
+        lang = item.get("language", "").lower()
+        if lang not in ("python3", "python"):
+            skipped_lang += 1
             continue
 
-        # Bug type filter (case-insensitive)
-        btype_raw = item.get(_btype_field, "") if _btype_field else ""
-        btype = btype_raw.strip()
-        if _bug_types_lower and btype.lower() not in _bug_types_lower:
+        # Bug type filter — dataset 'category' field, lowercase ("logic error" etc.)
+        category = item.get("category", "").lower().strip()
+        if _bug_types_lower and category not in _bug_types_lower:
+            skipped_type += 1
             continue
 
-        buggy_code   = item.get(_buggy_field, "")  if _buggy_field  else ""
-        correct_code = item.get(_correct_field, "") if _correct_field else ""
-        description  = item.get("description", "")
-        task_id      = str(item.get("task_id", item.get("id", len(problems))))
-
+        buggy_code   = item.get("buggy_code", "")
+        correct_code = item.get("solution", "")
         if not buggy_code or not correct_code:
+            skipped_code += 1
             continue
+
+        # Build description: question + examples (used for test-case extraction)
+        question    = item.get("question", "")
+        examples    = item.get("examples", "")
+        description = question + "\n" + (examples if isinstance(examples, str)
+                                         else "\n".join(examples))
+
+        task_id = item.get("slug", str(len(problems)))
 
         test_code = _build_debugbench_tests(description, correct_code, buggy_code)
         if not test_code:
+            skipped_tests += 1
             continue
 
         p = Problem(
             task_id=task_id,
-            prompt=description[:500],       # first 500 chars as context
+            prompt=question[:500],
             buggy_code=buggy_code,
             test_code=test_code,
             canonical_solution=correct_code,
-            bug_type=btype,
+            bug_type=category,
         )
         problems.append(p)
         if n and len(problems) >= n:
@@ -274,14 +255,9 @@ def load_debugbench(
     if seed is not None:
         random.shuffle(problems)
 
-    if len(problems) == 0:
-        print("[data_loader] WARNING: 0 problems loaded. Check the diagnostic output above.")
-        print("  Common causes:")
-        print("  1. Language filter: dataset may use 'python3' (lowercase) or 'Python'")
-        print("  2. Bug type filter: dataset may use 'logic_error' or different casing")
-        print("  3. Test generation failed: try passing bug_types=None to load all types")
-    print(f"[data_loader] Loaded {len(problems)} DebugBench problems "
-          f"(bug_types={bug_types})")
+    print(f"[data_loader] DebugBench: {len(problems)} loaded  "
+          f"(skipped: lang={skipped_lang} type={skipped_type} "
+          f"empty={skipped_code} no_tests={skipped_tests})")
     return problems[:n] if n else problems
 
 
