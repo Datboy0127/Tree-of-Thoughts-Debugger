@@ -6,10 +6,7 @@ import os
 BACKEND = os.getenv("TOT_BACKEND", "ollama")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# General-purpose model (not code-specialized) so baselines are harder
-# and ToT's structured search has more room to add value — matching
-# the paper's use of GPT-4 on a task it can't solve trivially.
-MODEL = os.getenv("TOT_MODEL", "qwen2.5:7b")
+MODEL = os.getenv("TOT_MODEL", "qwen2.5-coder:7b")
 
 MAX_TOKENS_AREA = 600        # level-1 area identification
 MAX_TOKENS_HYPOTHESIS = 800  # level-2 hypothesis generation

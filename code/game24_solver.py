@@ -13,6 +13,8 @@ Reference: Algorithm 1 (BFS) and Algorithm 2 (DFS) in the paper.
 """
 from __future__ import annotations
 
+import math
+import random as _random
 import re
 import time
 from dataclasses import dataclass, field
@@ -414,41 +416,7 @@ class Game24Solver:
         return thoughts, resp["tokens"]
 
     def _enumerate_steps(self, remaining: str) -> list[str]:
-        """
-        Enumerate all valid arithmetic steps from remaining numbers.
-        Used as fallback when the LLM generates too few thoughts.
-        """
-        try:
-            nums = [float(x) for x in remaining.split()]
-        except ValueError:
-            return []
-
-        steps = []
-        n = len(nums)
-        for i in range(n):
-            for j in range(n):
-                if i == j:
-                    continue
-                a, b = nums[i], nums[j]
-                left = [nums[k] for k in range(n) if k != i and k != j]
-                candidates = [
-                    (a + b, f"{_fmt(a)} + {_fmt(b)} = {_fmt(a+b)}"),
-                    (a - b, f"{_fmt(a)} - {_fmt(b)} = {_fmt(a-b)}"),
-                    (a * b, f"{_fmt(a)} * {_fmt(b)} = {_fmt(a*b)}"),
-                ]
-                if b != 0:
-                    candidates.append((a / b, f"{_fmt(a)} / {_fmt(b)} = {_fmt(a/b)}"))
-                for result, expr in candidates:
-                    left_str = " ".join(_fmt(x) for x in sorted(left + [result]))
-                    steps.append(f"{expr} (left: {left_str})")
-        # deduplicate
-        seen = set()
-        unique = []
-        for s in steps:
-            if s not in seen:
-                seen.add(s)
-                unique.append(s)
-        return unique
+        return _enumerate_steps(remaining)
 
     # ── Evaluate ──────────────────────────────────────────────────────────────
 
@@ -657,7 +625,214 @@ def print_game24_table(all_results: dict[str, list[Game24Result]]):
         )
 
 
+# ── MCTS data structure ────────────────────────────────────────────────────────
+
+@dataclass
+class Game24MCTSNode:
+    remaining: str                          # space-separated numbers left
+    path: list = field(default_factory=list)  # thought steps taken to reach here
+    parent: Optional["Game24MCTSNode"] = None
+    children: list = field(default_factory=list)
+    visits: int = 0
+    wins: float = 0.0
+    depth: int = 0                          # 0=root, 1/2/3=after each operation
+
+    def ucb1(self, exploration: float = math.sqrt(2)) -> float:
+        if self.visits == 0:
+            return float("inf")
+        parent_visits = self.parent.visits if self.parent else self.visits
+        return self.wins / self.visits + exploration * math.sqrt(
+            math.log(parent_visits) / self.visits
+        )
+
+    def is_terminal(self) -> bool:
+        return self.depth >= 3 or _is_done(self.remaining)
+
+    def is_expanded(self) -> bool:
+        return len(self.children) > 0
+
+
+def _backprop(node: Game24MCTSNode, reward: float):
+    current: Optional[Game24MCTSNode] = node
+    while current is not None:
+        current.visits += 1
+        current.wins += reward
+        current = current.parent
+
+
+# ── MCTS solver ────────────────────────────────────────────────────────────────
+
+class Game24MCTSSolver:
+    """
+    MCTS for Game of 24 — novel extension over Yao et al.
+
+    Each node is an intermediate arithmetic state (remaining numbers).
+    UCB1 concentrates expansion budget on promising states rather than
+    exploring all b branches uniformly (unlike BFS).
+
+    Selection:      UCB1 over intermediate states.
+    Expansion:      LLM propose prompt generates b candidate next steps.
+    Rollout:        Fast random mathematical rollout — no extra LLM calls.
+                    Checks all steps for an immediate solution first.
+    Backpropagation: Win=1 if path reaches 24, else 0.
+    Early stopping: First simulation that finds 24 halts the loop.
+
+    Hyperparameters
+    ---------------
+    b             : expansion branching factor (default 5, matches paper's b)
+    n_simulations : MCTS rollout budget (default 20)
+    exploration   : UCB1 constant C (default √2)
+    """
+
+    def __init__(
+        self,
+        llm: LLMClient,
+        b: int = 5,
+        n_simulations: int = 20,
+        exploration: float = math.sqrt(2),
+    ):
+        self.llm = llm
+        self.b = b
+        self.n_simulations = n_simulations
+        self.exploration = exploration
+
+    def solve(self, puzzle: str) -> Game24Result:
+        t0 = time.time()
+        root = Game24MCTSNode(remaining=puzzle, depth=0)
+        self._last_root = root
+
+        total_tokens = 0
+        nodes_explored = 0
+        best_path: Optional[list[str]] = None
+
+        for _ in range(self.n_simulations):
+            if best_path is not None:
+                break  # early stopping: solution already found
+
+            # ── 1. Selection ───────────────────────────────────────────────
+            node = root
+            while node.is_expanded() and not node.is_terminal():
+                node = max(node.children, key=lambda c: c.ucb1(self.exploration))
+
+            # ── 2. Expansion ───────────────────────────────────────────────
+            if not node.is_terminal() and not node.is_expanded():
+                thoughts, tok = self._propose(node.remaining)
+                total_tokens += tok
+                for thought in thoughts[: self.b]:
+                    new_rem = _parse_remaining(thought)
+                    if new_rem is None:
+                        continue
+                    child = Game24MCTSNode(
+                        remaining=new_rem,
+                        path=node.path + [thought],
+                        parent=node,
+                        depth=node.depth + 1,
+                    )
+                    node.children.append(child)
+                    nodes_explored += 1
+                    # Immediate win check at expansion time
+                    if child.depth == 3 and _is_done(new_rem):
+                        best_path = child.path
+
+                if not node.children:
+                    _backprop(node, 0.0)
+                    continue
+                node = node.children[0]
+
+            # ── 3. Rollout ─────────────────────────────────────────────────
+            reward, found = self._rollout(node)
+            if found is not None:
+                best_path = found
+
+            # ── 4. Backpropagation ─────────────────────────────────────────
+            _backprop(node, reward)
+
+        return Game24Result(
+            puzzle=puzzle,
+            method=f"mcts-b{self.b}-s{self.n_simulations}",
+            success=best_path is not None,
+            answer=Game24Solver._path_to_answer(puzzle, best_path) if best_path else None,
+            thoughts=best_path or [],
+            nodes_explored=nodes_explored,
+            total_tokens=total_tokens,
+            time_elapsed=round(time.time() - t0, 2),
+        )
+
+    def _propose(self, remaining: str) -> tuple[list[str], int]:
+        prompt = _PROPOSE_PROMPT.format(input=remaining)
+        resp = self.llm.call(prompt, system=_SYS, max_tokens=512, temperature=0.7)
+        thoughts = _parse_thoughts(resp["content"])
+        if len(thoughts) < 3:
+            thoughts = _enumerate_steps(remaining)
+        return thoughts, resp["tokens"]
+
+    def _rollout(self, node: Game24MCTSNode) -> tuple[float, Optional[list[str]]]:
+        """
+        Random mathematical rollout from node — no LLM calls.
+        Checks every candidate for an immediate win before picking randomly.
+        Returns (reward, winning_path_or_None).
+        """
+        remaining = node.remaining
+        path = list(node.path)
+
+        for _ in range(3 - node.depth):
+            if _is_done(remaining):
+                return 1.0, path
+
+            steps = _enumerate_steps(remaining)
+            if not steps:
+                return 0.0, None
+
+            # Greedy win check: does any step immediately reach 24?
+            for step in steps:
+                new_rem = _parse_remaining(step)
+                if new_rem and _is_done(new_rem):
+                    return 1.0, path + [step]
+
+            chosen = _random.choice(steps)
+            new_rem = _parse_remaining(chosen)
+            if new_rem is None:
+                return 0.0, None
+            path.append(chosen)
+            remaining = new_rem
+
+        return (1.0, path) if _is_done(remaining) else (0.0, None)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _enumerate_steps(remaining: str) -> list[str]:
+    """Enumerate all valid arithmetic steps from remaining numbers (no LLM)."""
+    try:
+        nums = [float(x) for x in remaining.split()]
+    except ValueError:
+        return []
+    steps = []
+    n = len(nums)
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            a, b_val = nums[i], nums[j]
+            left = [nums[k] for k in range(n) if k != i and k != j]
+            candidates = [
+                (a + b_val, f"{_fmt(a)} + {_fmt(b_val)} = {_fmt(a + b_val)}"),
+                (a - b_val, f"{_fmt(a)} - {_fmt(b_val)} = {_fmt(a - b_val)}"),
+                (a * b_val, f"{_fmt(a)} * {_fmt(b_val)} = {_fmt(a * b_val)}"),
+            ]
+            if b_val != 0:
+                candidates.append((a / b_val, f"{_fmt(a)} / {_fmt(b_val)} = {_fmt(a / b_val)}"))
+            for result, expr in candidates:
+                left_str = " ".join(_fmt(x) for x in sorted(left + [result]))
+                steps.append(f"{expr} (left: {left_str})")
+    seen: set = set()
+    unique = []
+    for s in steps:
+        if s not in seen:
+            seen.add(s)
+            unique.append(s)
+    return unique
+
 
 def _fmt(x: float) -> str:
     """Format a float without trailing zeros where possible."""

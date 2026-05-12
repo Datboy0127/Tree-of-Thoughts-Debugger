@@ -39,6 +39,7 @@ from game24_solver import (
     Game24IOBaseline,
     Game24CoTBaseline,
     Game24CoTSCBaseline,
+    Game24MCTSSolver,
     run_game24,
     compute_game24_metrics,
     print_game24_table,
@@ -104,13 +105,20 @@ def _run_game24_task(args, verbose: bool):
     searches = []
     if args.both or args.search == "both":
         searches = ["bfs", "dfs"]
+    elif args.search == "mcts":
+        searches = ["mcts"]
     else:
         searches = [args.search] if args.search in ("bfs", "dfs") else ["bfs"]
 
     for search in searches:
-        label = f"tot-{search}-b{args.k}"
-        print(f"── Running {label} ──")
-        solver = Game24Solver(llm, b=args.k, search=search)
+        if search == "mcts":
+            label = f"mcts-b{args.k}-s20"
+            print(f"── Running {label} ──")
+            solver = Game24MCTSSolver(llm, b=args.k, n_simulations=20)
+        else:
+            label = f"tot-{search}-b{args.k}"
+            print(f"── Running {label} ──")
+            solver = Game24Solver(llm, b=args.k, search=search)
         results = run_game24(puzzles, solver, label, verbose)
         all_results[label] = results
         m = compute_game24_metrics(results)
