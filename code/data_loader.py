@@ -546,6 +546,9 @@ def load_game24(
     """
     if csv_path is not None:
         puzzles = _load_game24_csv(csv_path, difficulty)
+        if not puzzles:
+            print(f"[data_loader] Warning: CSV returned 0 puzzles, falling back to built-in list.")
+            puzzles = list(_GAME24_HARD_PUZZLES)
     else:
         puzzles = list(_GAME24_HARD_PUZZLES)
 
@@ -562,23 +565,47 @@ def load_game24(
 
 
 def _load_game24_csv(csv_path: str, difficulty: str = "hard") -> list[str]:
-    """Parse 24.csv (columns: Puzzle, Rank) and return puzzle strings."""
+    """
+    Parse 24.csv (format: Rank,Puzzle,AMT,...) and return puzzle strings.
+    Puzzle column = whichever column has 4 space-separated integers.
+    Rank column   = first column that is a plain integer (not float, not %).
+    """
     puzzles_ranked: list[tuple[str, int]] = []
+
     with open(csv_path) as f:
         for line in f:
-            line = line.strip()
-            if not line:
+            parts = [p.strip() for p in line.strip().split(",")]
+            if len(parts) < 2:
                 continue
-            parts = line.split(",")
-            puzzle = parts[0].strip()
-            try:
-                # int(float(...)) handles both "901" and "73.5" style values
-                rank = int(float(parts[1].strip())) if len(parts) > 1 else 0
-            except ValueError:
-                continue  # skip header row or any non-numeric rank
-            # Skip rows where puzzle isn't 4 space-separated numbers
-            if len(puzzle.split()) != 4:
+
+            # Find puzzle column: exactly 4 tokens, all integers
+            puzzle_idx = None
+            for i, p in enumerate(parts):
+                tokens = p.split()
+                if len(tokens) == 4:
+                    try:
+                        [int(t) for t in tokens]
+                        puzzle_idx = i
+                        break
+                    except ValueError:
+                        pass
+
+            if puzzle_idx is None:
                 continue
+
+            puzzle = parts[puzzle_idx]
+
+            # Find rank: first column that is a plain integer (strict — rejects "4.4", "99%")
+            rank = 0
+            for i, p in enumerate(parts):
+                if i == puzzle_idx:
+                    continue
+                try:
+                    rank = int(p)   # strict: "901" OK, "4.4" raises ValueError
+                    break
+                except ValueError:
+                    pass
+
             puzzles_ranked.append((puzzle, rank))
 
     if not puzzles_ranked:
@@ -588,7 +615,7 @@ def _load_game24_csv(csv_path: str, difficulty: str = "hard") -> list[str]:
         hard = [p for p, r in puzzles_ranked if 901 <= r <= 1000]
         if hard:
             return hard
-        # Rank values may be percentages (0-100) — fall back to hardest 100
+        # Fallback: return the 100 highest-ranked puzzles
         puzzles_ranked.sort(key=lambda x: -x[1])
         return [p for p, _ in puzzles_ranked[:100]]
 
