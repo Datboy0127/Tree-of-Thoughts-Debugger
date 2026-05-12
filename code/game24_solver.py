@@ -381,6 +381,7 @@ class Game24Solver:
                     scored.append((score, new_rem, thought))
 
             scored.sort(key=lambda x: -x[0])  # best first
+            scored = scored[: self.b]          # cap to top-b like BFS
             for _, new_rem, thought in scored:
                 result = dfs(new_rem, path + [thought], depth + 1)
                 if result is not None:
