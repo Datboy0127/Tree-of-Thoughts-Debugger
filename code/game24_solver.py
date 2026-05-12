@@ -601,7 +601,7 @@ def run_game24(
 def compute_game24_metrics(results: list[Game24Result]) -> dict:
     n = len(results)
     if n == 0:
-        return {}
+        return {"n": 0, "success_rate": 0.0, "avg_tokens": 0.0, "avg_nodes": 0.0, "avg_time": 0.0}
     n_success = sum(r.success for r in results)
     return {
         "n": n,

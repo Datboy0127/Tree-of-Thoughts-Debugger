@@ -563,7 +563,7 @@ def load_game24(
 
 def _load_game24_csv(csv_path: str, difficulty: str = "hard") -> list[str]:
     """Parse 24.csv (columns: Puzzle, Rank) and return puzzle strings."""
-    puzzles = []
+    puzzles_ranked: list[tuple[str, int]] = []
     with open(csv_path) as f:
         for line in f:
             line = line.strip()
@@ -572,13 +572,27 @@ def _load_game24_csv(csv_path: str, difficulty: str = "hard") -> list[str]:
             parts = line.split(",")
             puzzle = parts[0].strip()
             try:
-                rank = int(parts[1].strip()) if len(parts) > 1 else 0
+                # int(float(...)) handles both "901" and "73.5" style values
+                rank = int(float(parts[1].strip())) if len(parts) > 1 else 0
             except ValueError:
                 continue  # skip header row or any non-numeric rank
-            if difficulty == "hard" and not (901 <= rank <= 1000):
+            # Skip rows where puzzle isn't 4 space-separated numbers
+            if len(puzzle.split()) != 4:
                 continue
-            puzzles.append(puzzle)
-    return puzzles
+            puzzles_ranked.append((puzzle, rank))
+
+    if not puzzles_ranked:
+        return []
+
+    if difficulty == "hard":
+        hard = [p for p, r in puzzles_ranked if 901 <= r <= 1000]
+        if hard:
+            return hard
+        # Rank values may be percentages (0-100) — fall back to hardest 100
+        puzzles_ranked.sort(key=lambda x: -x[1])
+        return [p for p, _ in puzzles_ranked[:100]]
+
+    return [p for p, _ in puzzles_ranked]
 
 
 def save_problems(problems: list[Problem], path: str):
