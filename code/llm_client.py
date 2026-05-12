@@ -33,7 +33,7 @@ class LLMClient:
         base_url, default_key = _BACKENDS.get(self.backend, _BACKENDS["openai"])
         self.base_url = base_url
         self.api_key = api_key or default_key or "none"
-        self.model = model or QWEN_MODELS.get(self.backend, config.MODEL)
+        self.model = model or config.MODEL or QWEN_MODELS.get(self.backend, "qwen2.5:7b")
         self._total_tokens = 0
         self._total_calls = 0
         self._client = None
