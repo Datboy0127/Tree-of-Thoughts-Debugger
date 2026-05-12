@@ -567,13 +567,14 @@ def _load_game24_csv(csv_path: str, difficulty: str = "hard") -> list[str]:
     with open(csv_path) as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("Puzzle"):
+            if not line:
                 continue
             parts = line.split(",")
-            if len(parts) < 1:
-                continue
             puzzle = parts[0].strip()
-            rank = int(parts[1].strip()) if len(parts) > 1 else 0
+            try:
+                rank = int(parts[1].strip()) if len(parts) > 1 else 0
+            except ValueError:
+                continue  # skip header row or any non-numeric rank
             if difficulty == "hard" and not (901 <= rank <= 1000):
                 continue
             puzzles.append(puzzle)
