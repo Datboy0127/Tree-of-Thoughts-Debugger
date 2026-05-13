@@ -582,6 +582,8 @@ def run_game24(
 ) -> list[Game24Result]:
     results = []
     for i, puzzle in enumerate(puzzles):
+        if verbose:
+            print(f"  [{label}] ({i+1}/{len(puzzles)}) solving {puzzle}...", end="\r", flush=True)
         try:
             result = solver.solve(puzzle)
         except Exception as e:
@@ -595,7 +597,7 @@ def run_game24(
         if verbose:
             status = "✓" if result.success else "✗"
             print(f"  [{label}] {status} {puzzle:15s}  "
-                  f"tokens={result.total_tokens:5d}  nodes={result.nodes_explored}")
+                  f"tokens={result.total_tokens:5d}  nodes={result.nodes_explored}  time={result.time_elapsed:.1f}s")
     return results
 
 
